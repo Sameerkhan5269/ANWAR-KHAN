@@ -1,0 +1,560 @@
+package com.example.data.model
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * Null-safe, crash-proof org.json codec for Supabase `nb_solar_store` JSONB records
+ * and local offline disk cache.
+ */
+object JsonCodec {
+
+    // --- STAFF USERS ---
+    fun encodeStaffUsers(list: List<StaffUser>): JSONArray = JSONArray().apply {
+        list.forEach { u ->
+            put(JSONObject().apply {
+                put("id", u.id)
+                put("loginId", u.loginId)
+                put("pin", u.pin)
+                put("displayName", u.displayName)
+                put("role", u.role.name)
+                put("isBuiltIn", u.isBuiltIn)
+            })
+        }
+    }
+
+    fun decodeStaffUsers(arr: JSONArray?): List<StaffUser> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val loginId = o.optString("loginId").trim()
+                val pin = o.optString("pin").trim()
+                if (loginId.isNotEmpty() && pin.isNotEmpty()) {
+                    add(
+                        StaffUser(
+                            id = o.optString("id").ifBlank { loginId },
+                            loginId = loginId,
+                            pin = pin,
+                            displayName = o.optString("displayName").ifBlank { loginId },
+                            role = StaffRole.fromString(o.optString("role")),
+                            isBuiltIn = o.optBoolean("isBuiltIn", false)
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    // --- PARTIES ---
+    fun encodeParties(list: List<PartyProject>): JSONArray = JSONArray().apply {
+        list.forEach { p ->
+            put(JSONObject().apply {
+                put("id", p.id)
+                put("partyName", p.partyName)
+                put("mobile", p.mobile)
+                put("address", p.address)
+                put("consumerNumber", p.consumerNumber)
+                put("capacityKw", p.capacityKw)
+                put("leadSource", p.leadSource.name)
+                put("projectValue", p.projectValue)
+                put("receivedAmount", p.receivedAmount)
+                put("loan1Amount", p.loan1Amount)
+                put("loan1Received", p.loan1Received)
+                put("loan2Amount", p.loan2Amount)
+                put("loan2Received", p.loan2Received)
+                put("subsidyAmount", p.subsidyAmount)
+                put("partnerCommissionPct", p.partnerCommissionPct)
+                put("createdDate", p.createdDate)
+                put("stages", JSONArray().apply {
+                    p.stages.forEach { s ->
+                        put(JSONObject().apply {
+                            put("id", s.id)
+                            put("section", s.section.name)
+                            put("title", s.title)
+                            put("completed", s.completed)
+                            put("completedAt", s.completedAt)
+                            put("completedBy", s.completedBy)
+                            put("remarks", s.remarks)
+                        })
+                    }
+                })
+                put("documents", JSONArray().apply {
+                    p.documents.forEach { d ->
+                        put(JSONObject().apply {
+                            put("id", d.id)
+                            put("title", d.title)
+                            put("category", d.category.name)
+                            put("fileName", d.fileName)
+                            put("mimeType", d.mimeType)
+                            put("localFilePath", d.localFilePath)
+                            put("base64Thumbnail", d.base64Thumbnail)
+                            put("uploadedAt", d.uploadedAt)
+                            put("uploadedBy", d.uploadedBy)
+                            put("notes", d.notes)
+                        })
+                    }
+                })
+                put("siteLogs", JSONArray().apply {
+                    p.siteLogs.forEach { log ->
+                        put(JSONObject().apply {
+                            put("id", log.id)
+                            put("timestamp", log.timestamp)
+                            put("author", log.author)
+                            put("message", log.message)
+                            put("viaWhatsAppParser", log.viaWhatsAppParser)
+                        })
+                    }
+                })
+            })
+        }
+    }
+
+    fun decodeParties(arr: JSONArray?): List<PartyProject> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val name = o.optString("partyName").ifBlank { o.optString("name") }
+                if (name.isBlank()) continue
+
+                val stagesArr = o.optJSONArray("stages")
+                val parsedStages = if (stagesArr != null && stagesArr.length() > 0) {
+                    buildList {
+                        for (j in 0 until stagesArr.length()) {
+                            val so = stagesArr.optJSONObject(j) ?: continue
+                            add(
+                                WorkflowStage(
+                                    id = so.optString("id"),
+                                    section = WorkflowSection.fromString(so.optString("section")),
+                                    title = so.optString("title"),
+                                    completed = so.optBoolean("completed", false),
+                                    completedAt = so.optString("completedAt"),
+                                    completedBy = so.optString("completedBy"),
+                                    remarks = so.optString("remarks")
+                                )
+                            )
+                        }
+                    }
+                } else {
+                    defaultWorkflowStages()
+                }
+
+                val docsArr = o.optJSONArray("documents")
+                val parsedDocs = buildList {
+                    if (docsArr != null) {
+                        for (j in 0 until docsArr.length()) {
+                            val d = docsArr.optJSONObject(j) ?: continue
+                            add(
+                                PartyDocument(
+                                    id = d.optString("id"),
+                                    title = d.optString("title"),
+                                    category = DocumentCategory.fromString(d.optString("category")),
+                                    fileName = d.optString("fileName"),
+                                    mimeType = d.optString("mimeType", "image/jpeg"),
+                                    localFilePath = d.optString("localFilePath"),
+                                    base64Thumbnail = d.optString("base64Thumbnail"),
+                                    uploadedAt = d.optString("uploadedAt"),
+                                    uploadedBy = d.optString("uploadedBy"),
+                                    notes = d.optString("notes")
+                                )
+                            )
+                        }
+                    }
+                }
+
+                val logsArr = o.optJSONArray("siteLogs")
+                val parsedLogs = buildList {
+                    if (logsArr != null) {
+                        for (j in 0 until logsArr.length()) {
+                            val l = logsArr.optJSONObject(j) ?: continue
+                            add(
+                                SiteLogEntry(
+                                    id = l.optString("id"),
+                                    timestamp = l.optString("timestamp"),
+                                    author = l.optString("author"),
+                                    message = l.optString("message"),
+                                    viaWhatsAppParser = l.optBoolean("viaWhatsAppParser", false)
+                                )
+                            )
+                        }
+                    }
+                }
+
+                add(
+                    PartyProject(
+                        id = o.optString("id").ifBlank { name },
+                        partyName = name,
+                        mobile = o.optString("mobile"),
+                        address = o.optString("address"),
+                        consumerNumber = o.optString("consumerNumber"),
+                        capacityKw = o.optDouble("capacityKw", 3.0).safeOrZero(),
+                        leadSource = LeadSource.fromString(o.optString("leadSource")),
+                        projectValue = o.optDouble("projectValue", 0.0).safeOrZero(),
+                        receivedAmount = o.optDouble("receivedAmount", 0.0).safeOrZero(),
+                        loan1Amount = o.optDouble("loan1Amount", 0.0).safeOrZero(),
+                        loan1Received = o.optBoolean("loan1Received", false),
+                        loan2Amount = o.optDouble("loan2Amount", 0.0).safeOrZero(),
+                        loan2Received = o.optBoolean("loan2Received", false),
+                        subsidyAmount = o.optDouble("subsidyAmount", 0.0).safeOrZero(),
+                        partnerCommissionPct = o.optDouble("partnerCommissionPct", 0.0).safeOrZero(),
+                        createdDate = o.optString("createdDate"),
+                        stages = parsedStages,
+                        documents = parsedDocs,
+                        siteLogs = parsedLogs
+                    )
+                )
+            }
+        }
+    }
+
+    // --- DCR PANELS ---
+    fun encodeDcrPanels(list: List<DcrPanel>): JSONArray = JSONArray().apply {
+        list.forEach { p ->
+            put(JSONObject().apply {
+                put("id", p.id)
+                put("serialNumber", p.serialNumber)
+                put("brand", p.brand)
+                put("wattage", p.wattage)
+                put("supplierName", p.supplierName)
+                put("purchaseInvoiceNo", p.purchaseInvoiceNo)
+                put("status", p.status.name)
+                put("linkedPartyId", p.linkedPartyId)
+                put("linkedPartyName", p.linkedPartyName)
+                put("addedDate", p.addedDate)
+            })
+        }
+    }
+
+    fun decodeDcrPanels(arr: JSONArray?): List<DcrPanel> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val serial = o.optString("serialNumber")
+                if (serial.isBlank()) continue
+                add(
+                    DcrPanel(
+                        id = o.optString("id").ifBlank { serial },
+                        serialNumber = serial,
+                        brand = o.optString("brand", "Waaree"),
+                        wattage = o.optInt("wattage", 540),
+                        supplierName = o.optString("supplierName"),
+                        purchaseInvoiceNo = o.optString("purchaseInvoiceNo"),
+                        status = PanelStatus.fromString(o.optString("status")),
+                        linkedPartyId = o.optString("linkedPartyId"),
+                        linkedPartyName = o.optString("linkedPartyName"),
+                        addedDate = o.optString("addedDate")
+                    )
+                )
+            }
+        }
+    }
+
+    // --- SOLAR METERS ---
+    fun encodeSolarMeters(list: List<SolarMeter>): JSONArray = JSONArray().apply {
+        list.forEach { m ->
+            put(JSONObject().apply {
+                put("id", m.id)
+                put("serialNumber", m.serialNumber)
+                put("meterType", m.meterType.name)
+                put("makeAndPhase", m.makeAndPhase)
+                put("testingStatus", m.testingStatus.name)
+                put("installedPartyId", m.installedPartyId)
+                put("installedPartyName", m.installedPartyName)
+            })
+        }
+    }
+
+    fun decodeSolarMeters(arr: JSONArray?): List<SolarMeter> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val serial = o.optString("serialNumber")
+                if (serial.isBlank()) continue
+                add(
+                    SolarMeter(
+                        id = o.optString("id").ifBlank { serial },
+                        serialNumber = serial,
+                        meterType = MeterType.fromString(o.optString("meterType")),
+                        makeAndPhase = o.optString("makeAndPhase", "L&T / 1-Phase"),
+                        testingStatus = DiscomTestingStatus.fromString(o.optString("testingStatus")),
+                        installedPartyId = o.optString("installedPartyId"),
+                        installedPartyName = o.optString("installedPartyName")
+                    )
+                )
+            }
+        }
+    }
+
+    // --- RAW MATERIALS ---
+    fun encodeRawMaterials(list: List<RawMaterial>): JSONArray = JSONArray().apply {
+        list.forEach { r ->
+            put(JSONObject().apply {
+                put("id", r.id)
+                put("name", r.name)
+                put("category", r.category)
+                put("unit", r.unit)
+                put("supplierName", r.supplierName)
+                put("purchasedQty", r.purchasedQty)
+                put("usedQty", r.usedQty)
+                put("minStockAlert", r.minStockAlert)
+                put("issueLogs", JSONArray().apply {
+                    r.issueLogs.forEach { log ->
+                        put(JSONObject().apply {
+                            put("id", log.id)
+                            put("partyId", log.partyId)
+                            put("partyName", log.partyName)
+                            put("quantity", log.quantity)
+                            put("date", log.date)
+                            put("issuedBy", log.issuedBy)
+                        })
+                    }
+                })
+            })
+        }
+    }
+
+    fun decodeRawMaterials(arr: JSONArray?): List<RawMaterial> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val name = o.optString("name")
+                if (name.isBlank()) continue
+                val logsArr = o.optJSONArray("issueLogs")
+                val logs = buildList {
+                    if (logsArr != null) {
+                        for (j in 0 until logsArr.length()) {
+                            val l = logsArr.optJSONObject(j) ?: continue
+                            add(
+                                MaterialIssueLog(
+                                    id = l.optString("id"),
+                                    partyId = l.optString("partyId"),
+                                    partyName = l.optString("partyName"),
+                                    quantity = l.optDouble("quantity", 0.0).safeOrZero(),
+                                    date = l.optString("date"),
+                                    issuedBy = l.optString("issuedBy")
+                                )
+                            )
+                        }
+                    }
+                }
+                add(
+                    RawMaterial(
+                        id = o.optString("id").ifBlank { name },
+                        name = name,
+                        category = o.optString("category", "BOS"),
+                        unit = o.optString("unit", "Nos"),
+                        supplierName = o.optString("supplierName"),
+                        purchasedQty = o.optDouble("purchasedQty", 0.0).safeOrZero(),
+                        usedQty = o.optDouble("usedQty", 0.0).safeOrZero(),
+                        minStockAlert = o.optDouble("minStockAlert", 10.0).safeOrZero(),
+                        issueLogs = logs
+                    )
+                )
+            }
+        }
+    }
+
+    // --- BUSY ACCOUNTS ---
+    fun encodeBusyAccounts(list: List<BusyAccount>): JSONArray = JSONArray().apply {
+        list.forEach { a ->
+            put(JSONObject().apply {
+                put("id", a.id)
+                put("name", a.name)
+                put("group", a.group.name)
+                put("openingBalance", a.openingBalance)
+                put("gstin", a.gstin)
+                put("mobile", a.mobile)
+                put("linkedPartyId", a.linkedPartyId)
+                put("defaultCostCenter", a.defaultCostCenter.name)
+            })
+        }
+    }
+
+    fun decodeBusyAccounts(arr: JSONArray?): List<BusyAccount> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val name = o.optString("name")
+                if (name.isBlank()) continue
+                add(
+                    BusyAccount(
+                        id = o.optString("id").ifBlank { name },
+                        name = name,
+                        group = BusyAccountGroup.fromString(o.optString("group")),
+                        openingBalance = o.optDouble("openingBalance", 0.0).safeOrZero(),
+                        gstin = o.optString("gstin"),
+                        mobile = o.optString("mobile"),
+                        linkedPartyId = o.optString("linkedPartyId"),
+                        defaultCostCenter = LeadSource.fromString(o.optString("defaultCostCenter"))
+                    )
+                )
+            }
+        }
+    }
+
+    // --- BUSY ITEMS ---
+    fun encodeBusyItems(list: List<BusyItem>): JSONArray = JSONArray().apply {
+        list.forEach { item ->
+            put(JSONObject().apply {
+                put("id", item.id)
+                put("name", item.name)
+                put("hsnCode", item.hsnCode)
+                put("unit", item.unit)
+                put("gstRatePercent", item.gstRatePercent)
+                put("defaultSaleRate", item.defaultSaleRate)
+                put("defaultPurchaseRate", item.defaultPurchaseRate)
+                put("stockQty", item.stockQty)
+            })
+        }
+    }
+
+    fun decodeBusyItems(arr: JSONArray?): List<BusyItem> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val name = o.optString("name")
+                if (name.isBlank()) continue
+                add(
+                    BusyItem(
+                        id = o.optString("id").ifBlank { name },
+                        name = name,
+                        hsnCode = o.optString("hsnCode", "854140"),
+                        unit = o.optString("unit", "Nos"),
+                        gstRatePercent = o.optDouble("gstRatePercent", 5.0).safeOrZero(),
+                        defaultSaleRate = o.optDouble("defaultSaleRate", 0.0).safeOrZero(),
+                        defaultPurchaseRate = o.optDouble("defaultPurchaseRate", 0.0).safeOrZero(),
+                        stockQty = o.optDouble("stockQty", 0.0).safeOrZero()
+                    )
+                )
+            }
+        }
+    }
+
+    // --- BUSY VOUCHERS ---
+    fun encodeBusyVouchers(list: List<BusyVoucher>): JSONArray = JSONArray().apply {
+        list.forEach { v ->
+            put(JSONObject().apply {
+                put("id", v.id)
+                put("type", v.type.name)
+                put("voucherNo", v.voucherNo)
+                put("date", v.date)
+                put("partyAccountId", v.partyAccountId)
+                put("partyAccountName", v.partyAccountName)
+                put("contraAccountId", v.contraAccountId)
+                put("contraAccountName", v.contraAccountName)
+                put("costCenter", v.costCenter.name)
+                put("isInterStateIgst", v.isInterStateIgst)
+                put("taxableAmount", v.taxableAmount)
+                put("cgstAmount", v.cgstAmount)
+                put("sgstAmount", v.sgstAmount)
+                put("igstAmount", v.igstAmount)
+                put("totalAmount", v.totalAmount)
+                put("billRefType", v.billRefType.name)
+                put("billRefNo", v.billRefNo)
+                put("utrOrChequeNo", v.utrOrChequeNo)
+                put("narration", v.narration)
+                put("partyGstin", v.partyGstin)
+                put("createdBy", v.createdBy)
+                put("lineItems", JSONArray().apply {
+                    v.lineItems.forEach { li ->
+                        put(JSONObject().apply {
+                            put("itemId", li.itemId)
+                            put("itemName", li.itemName)
+                            put("hsnCode", li.hsnCode)
+                            put("quantity", li.quantity)
+                            put("unit", li.unit)
+                            put("rate", li.rate)
+                            put("gstRatePercent", li.gstRatePercent)
+                        })
+                    }
+                })
+            })
+        }
+    }
+
+    fun decodeBusyVouchers(arr: JSONArray?): List<BusyVoucher> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val vNo = o.optString("voucherNo")
+                if (vNo.isBlank()) continue
+                val liArr = o.optJSONArray("lineItems")
+                val items = buildList {
+                    if (liArr != null) {
+                        for (j in 0 until liArr.length()) {
+                            val li = liArr.optJSONObject(j) ?: continue
+                            add(
+                                BusyLineItem(
+                                    itemId = li.optString("itemId"),
+                                    itemName = li.optString("itemName"),
+                                    hsnCode = li.optString("hsnCode", "854140"),
+                                    quantity = li.optDouble("quantity", 1.0).safeOrZero(),
+                                    unit = li.optString("unit", "Nos"),
+                                    rate = li.optDouble("rate", 0.0).safeOrZero(),
+                                    gstRatePercent = li.optDouble("gstRatePercent", 5.0).safeOrZero()
+                                )
+                            )
+                        }
+                    }
+                }
+                add(
+                    BusyVoucher(
+                        id = o.optString("id").ifBlank { vNo },
+                        type = BusyVoucherType.fromString(o.optString("type")),
+                        voucherNo = vNo,
+                        date = o.optString("date"),
+                        partyAccountId = o.optString("partyAccountId"),
+                        partyAccountName = o.optString("partyAccountName"),
+                        contraAccountId = o.optString("contraAccountId"),
+                        contraAccountName = o.optString("contraAccountName"),
+                        costCenter = LeadSource.fromString(o.optString("costCenter")),
+                        isInterStateIgst = o.optBoolean("isInterStateIgst", false),
+                        taxableAmount = o.optDouble("taxableAmount", 0.0).safeOrZero(),
+                        cgstAmount = o.optDouble("cgstAmount", 0.0).safeOrZero(),
+                        sgstAmount = o.optDouble("sgstAmount", 0.0).safeOrZero(),
+                        igstAmount = o.optDouble("igstAmount", 0.0).safeOrZero(),
+                        totalAmount = o.optDouble("totalAmount", 0.0).safeOrZero(),
+                        billRefType = BillRefType.fromString(o.optString("billRefType")),
+                        billRefNo = o.optString("billRefNo"),
+                        utrOrChequeNo = o.optString("utrOrChequeNo"),
+                        narration = o.optString("narration"),
+                        lineItems = items,
+                        partyGstin = o.optString("partyGstin"),
+                        createdBy = o.optString("createdBy")
+                    )
+                )
+            }
+        }
+    }
+
+    fun encodeSnapshot(s: AppDatabaseSnapshot): JSONObject = JSONObject().apply {
+        put("staff_users", encodeStaffUsers(s.staffUsers))
+        put("parties", encodeParties(s.parties))
+        put("inventory_panels", encodeDcrPanels(s.dcrPanels))
+        put("inventory_meters", encodeSolarMeters(s.solarMeters))
+        put("inventory_raw_materials", encodeRawMaterials(s.rawMaterials))
+        put("busy_accounts", encodeBusyAccounts(s.busyAccounts))
+        put("busy_items", encodeBusyItems(s.busyItems))
+        put("busy_vouchers", encodeBusyVouchers(s.busyVouchers))
+    }
+
+    fun decodeSnapshot(root: JSONObject): AppDatabaseSnapshot = AppDatabaseSnapshot(
+        staffUsers = decodeStaffUsers(root.optJSONArray("staff_users")),
+        parties = decodeParties(root.optJSONArray("parties")),
+        dcrPanels = decodeDcrPanels(root.optJSONArray("inventory_panels")),
+        solarMeters = decodeSolarMeters(root.optJSONArray("inventory_meters")),
+        rawMaterials = decodeRawMaterials(root.optJSONArray("inventory_raw_materials")),
+        busyAccounts = decodeBusyAccounts(root.optJSONArray("busy_accounts")),
+        busyItems = decodeBusyItems(root.optJSONArray("busy_items")),
+        busyVouchers = decodeBusyVouchers(root.optJSONArray("busy_vouchers"))
+    )
+
+    private fun Double.safeOrZero(): Double = if (this.isNaN() || this.isInfinite()) 0.0 else this
+}
