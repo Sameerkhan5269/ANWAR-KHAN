@@ -1,6 +1,6 @@
 {
-  "name": "NB Solar ERP",
-  "description": "Solar EPC project pipeline, inventory, document vault, and BUSY 21 accounting suite for NB Engineering Works and Electricals with real-time Supabase sync and AI document scanning.",
+  "name": "NB Solar & Wind ERP",
+  "description": "Solar & Wind EPC project pipeline, inventory, delivery challans, payment receipts, document vault, and BUSY 21 GST accounting suite for NB Engineering Works and Electricals with real-time Supabase sync.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

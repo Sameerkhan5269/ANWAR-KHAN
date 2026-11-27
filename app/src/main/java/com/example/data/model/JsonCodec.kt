@@ -4,8 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Null-safe, crash-proof org.json codec for Supabase `nb_solar_store` JSONB records
- * and local offline disk cache.
+ * Null-safe, crash-proof org.json codec for Supabase `nb_solar_store` JSONB records.
  */
 object JsonCodec {
 
@@ -19,6 +18,8 @@ object JsonCodec {
                 put("displayName", u.displayName)
                 put("role", u.role.name)
                 put("isBuiltIn", u.isBuiltIn)
+                put("imprestBalance", u.imprestBalance)
+                put("assignedDivision", u.assignedDivision?.name ?: "")
             })
         }
     }
@@ -31,6 +32,8 @@ object JsonCodec {
                 val loginId = o.optString("loginId").trim()
                 val pin = o.optString("pin").trim()
                 if (loginId.isNotEmpty() && pin.isNotEmpty()) {
+                    val divRaw = o.optString("assignedDivision").trim()
+                    val assignedDiv = if (divRaw.isNotEmpty()) ProjectDivision.fromString(divRaw) else null
                     add(
                         StaffUser(
                             id = o.optString("id").ifBlank { loginId },
@@ -38,7 +41,9 @@ object JsonCodec {
                             pin = pin,
                             displayName = o.optString("displayName").ifBlank { loginId },
                             role = StaffRole.fromString(o.optString("role")),
-                            isBuiltIn = o.optBoolean("isBuiltIn", false)
+                            isBuiltIn = o.optBoolean("isBuiltIn", false),
+                            imprestBalance = o.optDouble("imprestBalance", 0.0).safeOrZero(),
+                            assignedDivision = assignedDiv
                         )
                     )
                 }
@@ -54,9 +59,19 @@ object JsonCodec {
                 put("partyName", p.partyName)
                 put("mobile", p.mobile)
                 put("address", p.address)
+                put("cityOrLocation", p.cityOrLocation)
                 put("consumerNumber", p.consumerNumber)
                 put("capacityKw", p.capacityKw)
+                put("division", p.division.name)
                 put("leadSource", p.leadSource.name)
+                put("referrerName", p.referrerName)
+                put("referrerPhone", p.referrerPhone)
+                put("leadDate", p.leadDate)
+                put("roofStructureType", p.roofStructureType.name)
+                put("quotedRatePerKw", p.quotedRatePerKw)
+                put("nextFollowUpDate", p.nextFollowUpDate)
+                put("siteSurveyNotes", p.siteSurveyNotes)
+                put("leadStatus", p.leadStatus.name)
                 put("projectValue", p.projectValue)
                 put("receivedAmount", p.receivedAmount)
                 put("loan1Amount", p.loan1Amount)
@@ -65,6 +80,8 @@ object JsonCodec {
                 put("loan2Received", p.loan2Received)
                 put("subsidyAmount", p.subsidyAmount)
                 put("partnerCommissionPct", p.partnerCommissionPct)
+                put("referralPaid", p.referralPaid)
+                put("referralPayoutDate", p.referralPayoutDate)
                 put("createdDate", p.createdDate)
                 put("stages", JSONArray().apply {
                     p.stages.forEach { s ->
@@ -103,6 +120,24 @@ object JsonCodec {
                             put("author", log.author)
                             put("message", log.message)
                             put("viaWhatsAppParser", log.viaWhatsAppParser)
+                        })
+                    }
+                })
+                put("sitePurchases", JSONArray().apply {
+                    p.sitePurchases.forEach { sp ->
+                        put(JSONObject().apply {
+                            put("id", sp.id)
+                            put("itemDescription", sp.itemDescription)
+                            put("quantity", sp.quantity)
+                            put("vendorName", sp.vendorName)
+                            put("amount", sp.amount)
+                            put("paymentSource", sp.paymentSource.name)
+                            put("billPhotoPath", sp.billPhotoPath)
+                            put("billPhotoBase64", sp.billPhotoBase64)
+                            put("purchasedByLoginId", sp.purchasedByLoginId)
+                            put("purchasedByName", sp.purchasedByName)
+                            put("purchaseDate", sp.purchaseDate)
+                            put("linkedVoucherNo", sp.linkedVoucherNo)
                         })
                     }
                 })
@@ -181,15 +216,53 @@ object JsonCodec {
                     }
                 }
 
+                val purchasesArr = o.optJSONArray("sitePurchases")
+                val parsedPurchases = buildList {
+                    if (purchasesArr != null) {
+                        for (j in 0 until purchasesArr.length()) {
+                            val sp = purchasesArr.optJSONObject(j) ?: continue
+                            val itemDesc = sp.optString("itemDescription")
+                            if (itemDesc.isBlank()) continue
+                            add(
+                                SiteMaterialPurchase(
+                                    id = sp.optString("id").ifBlank { "${i}_${j}" },
+                                    itemDescription = itemDesc,
+                                    quantity = sp.optString("quantity", "1"),
+                                    vendorName = sp.optString("vendorName"),
+                                    amount = sp.optDouble("amount", 0.0).safeOrZero(),
+                                    paymentSource = SitePurchasePaymentSource.fromString(sp.optString("paymentSource")),
+                                    billPhotoPath = sp.optString("billPhotoPath"),
+                                    billPhotoBase64 = sp.optString("billPhotoBase64"),
+                                    purchasedByLoginId = sp.optString("purchasedByLoginId"),
+                                    purchasedByName = sp.optString("purchasedByName"),
+                                    purchaseDate = sp.optString("purchaseDate"),
+                                    linkedVoucherNo = sp.optString("linkedVoucherNo")
+                                )
+                            )
+                        }
+                    }
+                }
+
+                val created = o.optString("createdDate")
                 add(
                     PartyProject(
                         id = o.optString("id").ifBlank { name },
                         partyName = name,
                         mobile = o.optString("mobile"),
                         address = o.optString("address"),
+                        cityOrLocation = o.optString("cityOrLocation").ifBlank { o.optString("address") },
                         consumerNumber = o.optString("consumerNumber"),
                         capacityKw = o.optDouble("capacityKw", 3.0).safeOrZero(),
+                        division = ProjectDivision.fromString(o.optString("division")),
                         leadSource = LeadSource.fromString(o.optString("leadSource")),
+                        referrerName = o.optString("referrerName"),
+                        referrerPhone = o.optString("referrerPhone"),
+                        leadDate = o.optString("leadDate").ifBlank { created },
+                        roofStructureType = RoofStructureType.fromString(o.optString("roofStructureType")),
+                        quotedRatePerKw = o.optDouble("quotedRatePerKw", 0.0).safeOrZero(),
+                        nextFollowUpDate = o.optString("nextFollowUpDate"),
+                        siteSurveyNotes = o.optString("siteSurveyNotes"),
+                        leadStatus = LeadStatus.fromString(o.optString("leadStatus")),
                         projectValue = o.optDouble("projectValue", 0.0).safeOrZero(),
                         receivedAmount = o.optDouble("receivedAmount", 0.0).safeOrZero(),
                         loan1Amount = o.optDouble("loan1Amount", 0.0).safeOrZero(),
@@ -198,10 +271,13 @@ object JsonCodec {
                         loan2Received = o.optBoolean("loan2Received", false),
                         subsidyAmount = o.optDouble("subsidyAmount", 0.0).safeOrZero(),
                         partnerCommissionPct = o.optDouble("partnerCommissionPct", 0.0).safeOrZero(),
-                        createdDate = o.optString("createdDate"),
+                        referralPaid = o.optBoolean("referralPaid", false),
+                        referralPayoutDate = o.optString("referralPayoutDate"),
+                        createdDate = created,
                         stages = parsedStages,
                         documents = parsedDocs,
-                        siteLogs = parsedLogs
+                        siteLogs = parsedLogs,
+                        sitePurchases = parsedPurchases
                     )
                 )
             }
@@ -222,6 +298,7 @@ object JsonCodec {
                 put("linkedPartyId", p.linkedPartyId)
                 put("linkedPartyName", p.linkedPartyName)
                 put("addedDate", p.addedDate)
+                put("unitCost", p.unitCost)
             })
         }
     }
@@ -244,7 +321,8 @@ object JsonCodec {
                         status = PanelStatus.fromString(o.optString("status")),
                         linkedPartyId = o.optString("linkedPartyId"),
                         linkedPartyName = o.optString("linkedPartyName"),
-                        addedDate = o.optString("addedDate")
+                        addedDate = o.optString("addedDate"),
+                        unitCost = o.optDouble("unitCost", 12200.0).safeOrZero()
                     )
                 )
             }
@@ -262,6 +340,7 @@ object JsonCodec {
                 put("testingStatus", m.testingStatus.name)
                 put("installedPartyId", m.installedPartyId)
                 put("installedPartyName", m.installedPartyName)
+                put("unitCost", m.unitCost)
             })
         }
     }
@@ -281,7 +360,8 @@ object JsonCodec {
                         makeAndPhase = o.optString("makeAndPhase", "L&T / 1-Phase"),
                         testingStatus = DiscomTestingStatus.fromString(o.optString("testingStatus")),
                         installedPartyId = o.optString("installedPartyId"),
-                        installedPartyName = o.optString("installedPartyName")
+                        installedPartyName = o.optString("installedPartyName"),
+                        unitCost = o.optDouble("unitCost", 2400.0).safeOrZero()
                     )
                 )
             }
@@ -300,6 +380,7 @@ object JsonCodec {
                 put("purchasedQty", r.purchasedQty)
                 put("usedQty", r.usedQty)
                 put("minStockAlert", r.minStockAlert)
+                put("unitCost", r.unitCost)
                 put("issueLogs", JSONArray().apply {
                     r.issueLogs.forEach { log ->
                         put(JSONObject().apply {
@@ -351,7 +432,94 @@ object JsonCodec {
                         purchasedQty = o.optDouble("purchasedQty", 0.0).safeOrZero(),
                         usedQty = o.optDouble("usedQty", 0.0).safeOrZero(),
                         minStockAlert = o.optDouble("minStockAlert", 10.0).safeOrZero(),
+                        unitCost = o.optDouble("unitCost", 0.0).safeOrZero(),
                         issueLogs = logs
+                    )
+                )
+            }
+        }
+    }
+
+    // --- LEKHA JOKHA (SITE KHARCHA) ---
+    fun encodeSiteKharcha(list: List<SiteKharchaEntry>): JSONArray = JSONArray().apply {
+        list.forEach { k ->
+            put(JSONObject().apply {
+                put("id", k.id)
+                put("partyId", k.partyId)
+                put("partyName", k.partyName)
+                put("category", k.category.name)
+                put("workerOrTitle", k.workerOrTitle)
+                put("amount", k.amount)
+                put("date", k.date)
+                put("note", k.note)
+                put("loggedBy", k.loggedBy)
+                put("linkedVoucherNo", k.linkedVoucherNo)
+            })
+        }
+    }
+
+    fun decodeSiteKharcha(arr: JSONArray?): List<SiteKharchaEntry> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val title = o.optString("workerOrTitle")
+                if (title.isBlank()) continue
+                add(
+                    SiteKharchaEntry(
+                        id = o.optString("id").ifBlank { "kh_$i" },
+                        partyId = o.optString("partyId"),
+                        partyName = o.optString("partyName"),
+                        category = KharchaCategory.fromString(o.optString("category")),
+                        workerOrTitle = title,
+                        amount = o.optDouble("amount", 0.0).safeOrZero(),
+                        date = o.optString("date"),
+                        note = o.optString("note"),
+                        loggedBy = o.optString("loggedBy"),
+                        linkedVoucherNo = o.optString("linkedVoucherNo")
+                    )
+                )
+            }
+        }
+    }
+
+    // --- TEAM CHAT ---
+    fun encodeTeamChat(list: List<TeamChatMessage>): JSONArray = JSONArray().apply {
+        list.forEach { m ->
+            put(JSONObject().apply {
+                put("id", m.id)
+                put("senderLoginId", m.senderLoginId)
+                put("senderName", m.senderName)
+                put("senderRole", m.senderRole.name)
+                put("text", m.text)
+                put("videoPath", m.videoPath)
+                put("videoLabel", m.videoLabel)
+                put("timestamp", m.timestamp)
+                put("division", m.division?.name ?: "")
+            })
+        }
+    }
+
+    fun decodeTeamChat(arr: JSONArray?): List<TeamChatMessage> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val sender = o.optString("senderLoginId")
+                if (sender.isBlank()) continue
+                val divRaw = o.optString("division").trim()
+                val div = if (divRaw.isNotEmpty()) ProjectDivision.fromString(divRaw) else null
+                add(
+                    TeamChatMessage(
+                        id = o.optString("id").ifBlank { "msg_$i" },
+                        senderLoginId = sender,
+                        senderName = o.optString("senderName").ifBlank { sender },
+                        senderRole = StaffRole.fromString(o.optString("senderRole")),
+                        text = o.optString("text"),
+                        videoPath = o.optString("videoPath"),
+                        videoLabel = o.optString("videoLabel"),
+                        timestamp = o.optString("timestamp"),
+                        division = div
                     )
                 )
             }
@@ -458,6 +626,7 @@ object JsonCodec {
                 put("billRefType", v.billRefType.name)
                 put("billRefNo", v.billRefNo)
                 put("utrOrChequeNo", v.utrOrChequeNo)
+                put("paidBy", v.paidBy)
                 put("narration", v.narration)
                 put("partyGstin", v.partyGstin)
                 put("createdBy", v.createdBy)
@@ -524,6 +693,7 @@ object JsonCodec {
                         billRefType = BillRefType.fromString(o.optString("billRefType")),
                         billRefNo = o.optString("billRefNo"),
                         utrOrChequeNo = o.optString("utrOrChequeNo"),
+                        paidBy = o.optString("paidBy"),
                         narration = o.optString("narration"),
                         lineItems = items,
                         partyGstin = o.optString("partyGstin"),
@@ -533,28 +703,6 @@ object JsonCodec {
             }
         }
     }
-
-    fun encodeSnapshot(s: AppDatabaseSnapshot): JSONObject = JSONObject().apply {
-        put("staff_users", encodeStaffUsers(s.staffUsers))
-        put("parties", encodeParties(s.parties))
-        put("inventory_panels", encodeDcrPanels(s.dcrPanels))
-        put("inventory_meters", encodeSolarMeters(s.solarMeters))
-        put("inventory_raw_materials", encodeRawMaterials(s.rawMaterials))
-        put("busy_accounts", encodeBusyAccounts(s.busyAccounts))
-        put("busy_items", encodeBusyItems(s.busyItems))
-        put("busy_vouchers", encodeBusyVouchers(s.busyVouchers))
-    }
-
-    fun decodeSnapshot(root: JSONObject): AppDatabaseSnapshot = AppDatabaseSnapshot(
-        staffUsers = decodeStaffUsers(root.optJSONArray("staff_users")),
-        parties = decodeParties(root.optJSONArray("parties")),
-        dcrPanels = decodeDcrPanels(root.optJSONArray("inventory_panels")),
-        solarMeters = decodeSolarMeters(root.optJSONArray("inventory_meters")),
-        rawMaterials = decodeRawMaterials(root.optJSONArray("inventory_raw_materials")),
-        busyAccounts = decodeBusyAccounts(root.optJSONArray("busy_accounts")),
-        busyItems = decodeBusyItems(root.optJSONArray("busy_items")),
-        busyVouchers = decodeBusyVouchers(root.optJSONArray("busy_vouchers"))
-    )
 
     private fun Double.safeOrZero(): Double = if (this.isNaN() || this.isInfinite()) 0.0 else this
 }

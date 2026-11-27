@@ -26,9 +26,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -81,15 +84,21 @@ import com.example.data.model.BusyItem
 import com.example.data.model.BusyLineItem
 import com.example.data.model.BusyVoucher
 import com.example.data.model.BusyVoucherType
+import com.example.data.model.DcrPanel
 import com.example.data.model.LeadSource
 import com.example.data.model.ParsedPurchaseBill
 import com.example.data.model.PartyProject
+import com.example.data.model.RawMaterial
+import com.example.data.model.SiteKharchaEntry
+import com.example.data.model.SolarMeter
 import com.example.data.model.StaffRole
-import com.example.ui.theme.DeepNavy
-import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.LimeGreen
+import com.example.ui.theme.LimeSoft
 import com.example.ui.theme.LocalSolarColors
-import com.example.ui.theme.SolarAmber
+import com.example.ui.theme.MaroonPrimary
+import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.viewmodel.AiScanUiState
+import java.util.Locale
 
 private enum class BusyMenuSection(val label: String) {
     VOUCHERS("Vouchers"),
@@ -102,9 +111,12 @@ private enum class BusyMenuSection(val label: String) {
 private enum class BusyReportTab(val label: String) {
     LEDGER("Account Ledger (Alt+L)"),
     DAY_BOOK("Day Book"),
+    DAY_BY_DAY("Day-by-Day"),
     TRIAL_BALANCE("Trial Balance & P&L"),
+    PARTY_COSTING("Party Costing"),
     AGING("Receivable Aging"),
-    COST_CENTERS("Cost Centers")
+    COST_CENTERS("Cost Centers"),
+    REFERRALS("Referrals")
 }
 
 @Composable
@@ -114,14 +126,19 @@ fun BusyAccountingScreen(
     items: List<BusyItem>,
     vouchers: List<BusyVoucher>,
     parties: List<PartyProject>,
+    dcrPanels: List<DcrPanel>,
+    solarMeters: List<SolarMeter>,
+    rawMaterials: List<RawMaterial>,
+    siteKharcha: List<SiteKharchaEntry>,
     aiState: AiScanUiState,
     onAddAccount: (String, BusyAccountGroup, Double, String, LeadSource) -> Unit,
     onAddItem: (String, String, String, Double, Double, Double, Double) -> Unit,
     onPostVoucher: (
         BusyVoucherType, String, BusyAccount, BusyAccount, LeadSource, Boolean,
-        Double, Double, BillRefType, String, String, String, List<BusyLineItem>
+        Double, Double, BillRefType, String, String, String, String, List<BusyLineItem>
     ) -> Boolean,
     onDeleteVoucher: (String) -> Unit,
+    onMarkReferralPaid: (String, Boolean) -> Unit,
     onScanBankUri: (Uri, String) -> Unit,
     onScanBankText: (String, String) -> Unit,
     onToggleBankRow: (String) -> Unit,
@@ -180,24 +197,24 @@ fun BusyAccountingScreen(
             }
     ) {
         // Classic BUSY 21 Top Ribbon Header
-        Surface(color = DeepNavy, modifier = Modifier.fillMaxWidth()) {
+        Surface(color = MaroonPrimary, modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             "BUSY 21 ACCOUNTING SUITE",
                             style = MaterialTheme.typography.titleSmall,
-                            color = SolarAmber,
+                            color = Color(0xFFDCEDC8),
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "FY 2026-27 • NB Engineering Works & Electricals (Udaipur)",
+                            "FY 2026-27 • NB ENGINEERING WORKS AND ELECTRICALS (GSTIN: 08CSZPK9277N2Z8)",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFCBD5E1)
+                            color = Color(0xFFFFDAD8)
                         )
                     }
                     OutlinedButton(
@@ -208,13 +225,13 @@ fun BusyAccountingScreen(
                                 onFailure = { onShowMessage("Export failed: ${it.message}") }
                             )
                         },
-                        border = BorderStroke(1.dp, SolarAmber),
+                        border = BorderStroke(1.dp, Color(0xFFDCEDC8)),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         modifier = Modifier.testTag("busy_export_csv_btn")
                     ) {
-                        Icon(Icons.Filled.Download, contentDescription = "Export BUSY 21 CSV", tint = SolarAmber, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Filled.Download, contentDescription = "Export BUSY 21 CSV", tint = Color(0xFFDCEDC8), modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("BUSY CSV", color = SolarAmber, style = MaterialTheme.typography.labelSmall)
+                        Text("BUSY CSV", color = Color(0xFFDCEDC8), style = MaterialTheme.typography.labelSmall)
                     }
                 }
 
@@ -224,16 +241,16 @@ fun BusyAccountingScreen(
                     items(BusyVoucherType.entries) { vt ->
                         Surface(
                             onClick = { voucherDialogType = vt },
-                            color = Color(0xFF1B2B4B),
+                            color = Color(0xFF6B1412),
                             shape = RoundedCornerShape(6.dp),
-                            border = BorderStroke(1.dp, SolarAmber.copy(alpha = 0.45f)),
+                            border = BorderStroke(1.dp, Color(0xFFDCEDC8).copy(alpha = 0.55f)),
                             modifier = Modifier.testTag("shortcut_${vt.shortcut.lowercase()}")
                         ) {
                             Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
                                 Text(
                                     vt.shortcut,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = SolarAmber,
+                                    color = Color(0xFFDCEDC8),
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(Modifier.width(4.dp))
@@ -282,6 +299,15 @@ fun BusyAccountingScreen(
             BusyAccountingEngine.computeCostCenterSummary(parties, vouchers)
         }
         val gst = remember(vouchers) { BusyAccountingEngine.computeGstSummary(vouchers) }
+        val dayByDayRows = remember(vouchers, siteKharcha) {
+            BusyAccountingEngine.computeDayByDayReport(vouchers, siteKharcha)
+        }
+        val partyCostingRows = remember(parties, dcrPanels, solarMeters, rawMaterials, siteKharcha) {
+            BusyAccountingEngine.computePartyCostingReport(parties, dcrPanels, solarMeters, rawMaterials, siteKharcha)
+        }
+        val referralRows = remember(parties) {
+            BusyAccountingEngine.computeReferralCommissions(parties)
+        }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -314,10 +340,27 @@ fun BusyAccountingScreen(
                         }
                     } else {
                         items(vouchers, key = { it.id }) { v ->
+                            val linkedParty = parties.firstOrNull {
+                                it.partyName.equals(v.partyAccountName, ignoreCase = true)
+                            }
                             BusyVoucherRowCard(
                                 voucher = v,
                                 canDelete = canDelete,
                                 onPrint = { ExportPrintHelper.printTaxInvoiceA4(context, v) },
+                                onPrintChallan = if (v.type == BusyVoucherType.SALES) {
+                                    {
+                                        ExportPrintHelper.printDeliveryChallanA4(
+                                            context = context,
+                                            partyName = v.partyAccountName,
+                                            partyAddress = linkedParty?.cityOrLocation?.ifBlank { linkedParty.address } ?: "Udaipur, Rajasthan",
+                                            partyPhone = linkedParty?.mobile.orEmpty(),
+                                            challanNo = "DC-${v.voucherNo.replace("/", "-")}",
+                                            date = v.date,
+                                            items = v.lineItems,
+                                            remarks = v.narration
+                                        )
+                                    }
+                                } else null,
                                 onDelete = { onDeleteVoucher(v.id) }
                             )
                         }
@@ -377,8 +420,9 @@ fun BusyAccountingScreen(
                                         val (closeTxt, closeDr) = formatBusyDrCr(ledger.closingBalance)
 
                                         Card(
+                                            shape = RoundedCornerShape(8.dp),
                                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                            border = BorderStroke(1.dp, solarColors.hairlineBorder)
+                                            border = BorderStroke(1.dp, solarColors.gridBorderStrong)
                                         ) {
                                             Column(modifier = Modifier.padding(12.dp)) {
                                                 Row(
@@ -390,7 +434,7 @@ fun BusyAccountingScreen(
                                                         Text(selectedAcc.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                                         Text(
                                                             "${selectedAcc.group.label} • Opening: $openTxt",
-                                                            style = MaterialTheme.typography.labelSmall,
+                                                            style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
                                                             color = if (openDr) solarColors.debitBlue else solarColors.creditRed
                                                         )
                                                     }
@@ -415,7 +459,11 @@ fun BusyAccountingScreen(
 
                                                 Spacer(Modifier.height(10.dp))
                                                 // Dense BUSY-style Tabular Ledger Grid
-                                                Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .horizontalScroll(rememberScrollState())
+                                                        .background(MaterialTheme.colorScheme.surface)
+                                                ) {
                                                     BusyTableHeaderRow(
                                                         listOf("Date" to 88, "Vch No" to 96, "Particulars" to 150, "Debit (Dr)" to 96, "Credit (Cr)" to 96, "Balance" to 116)
                                                     )
@@ -429,12 +477,11 @@ fun BusyAccountingScreen(
                                                         ledger.rows.forEach { r ->
                                                             val (balStr, isDr) = formatBusyDrCr(r.runningBalance)
                                                             Row(
-                                                                modifier = Modifier
-                                                                    .padding(vertical = 6.dp, horizontal = 6.dp),
+                                                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 6.dp),
                                                                 verticalAlignment = Alignment.CenterVertically
                                                             ) {
-                                                                Text(r.date, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(88.dp))
-                                                                Text(r.voucherNo, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(96.dp))
+                                                                Text(r.date, style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), modifier = Modifier.width(88.dp))
+                                                                Text(r.voucherNo, style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), modifier = Modifier.width(96.dp))
                                                                 Column(modifier = Modifier.width(150.dp)) {
                                                                     Text(r.particulars, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                                     if (r.narration.isNotBlank()) {
@@ -443,28 +490,28 @@ fun BusyAccountingScreen(
                                                                 }
                                                                 Text(
                                                                     if (r.debit > 0) formatInr(r.debit, true) else "-",
-                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
                                                                     color = solarColors.debitBlue,
                                                                     textAlign = TextAlign.End,
                                                                     modifier = Modifier.width(96.dp)
                                                                 )
                                                                 Text(
                                                                     if (r.credit > 0) formatInr(r.credit, true) else "-",
-                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
                                                                     color = solarColors.creditRed,
                                                                     textAlign = TextAlign.End,
                                                                     modifier = Modifier.width(96.dp)
                                                                 )
                                                                 Text(
                                                                     balStr,
-                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
                                                                     fontWeight = FontWeight.Bold,
                                                                     color = if (isDr) solarColors.debitBlue else solarColors.creditRed,
                                                                     textAlign = TextAlign.End,
                                                                     modifier = Modifier.width(116.dp)
                                                                 )
                                                             }
-                                                            HorizontalDivider(color = solarColors.hairlineBorder)
+                                                            HorizontalDivider(color = solarColors.gridBorderStrong)
                                                         }
                                                     }
                                                 }
@@ -477,8 +524,7 @@ fun BusyAccountingScreen(
                                                     Text("Closing Balance:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                                                     Text(
                                                         closeTxt,
-                                                        style = MaterialTheme.typography.titleMedium,
-                                                        fontFamily = JetBrainsMonoFontFamily,
+                                                        style = MaterialTheme.typography.titleMedium.merge(TabularNumberStyle),
                                                         fontWeight = FontWeight.Bold,
                                                         color = if (closeDr) solarColors.debitBlue else solarColors.creditRed
                                                     )
@@ -515,12 +561,106 @@ fun BusyAccountingScreen(
                                 item { BusyEmptyNotice("No vouchers recorded for selected Day Book filter.") }
                             } else {
                                 items(dayRows, key = { it.id }) { v ->
+                                    val linkedParty = parties.firstOrNull {
+                                        it.partyName.equals(v.partyAccountName, ignoreCase = true)
+                                    }
                                     BusyVoucherRowCard(
                                         voucher = v,
                                         canDelete = canDelete,
                                         onPrint = { ExportPrintHelper.printTaxInvoiceA4(context, v) },
+                                        onPrintChallan = if (v.type == BusyVoucherType.SALES) {
+                                            {
+                                                ExportPrintHelper.printDeliveryChallanA4(
+                                                    context = context,
+                                                    partyName = v.partyAccountName,
+                                                    partyAddress = linkedParty?.cityOrLocation?.ifBlank { linkedParty.address } ?: "Udaipur, Rajasthan",
+                                                    partyPhone = linkedParty?.mobile.orEmpty(),
+                                                    challanNo = "DC-${v.voucherNo.replace("/", "-")}",
+                                                    date = v.date,
+                                                    items = v.lineItems,
+                                                    remarks = v.narration
+                                                )
+                                            }
+                                        } else null,
                                         onDelete = { onDeleteVoucher(v.id) }
                                     )
+                                }
+                            }
+                        }
+
+                        BusyReportTab.DAY_BY_DAY -> {
+                            item {
+                                Card(
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, solarColors.gridBorderStrong),
+                                    modifier = Modifier.testTag("day_by_day_report_card")
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(
+                                            "Day-by-Day Financial Register",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            "Daily Sales, Collections, Purchases, Payments & Site Kharcha Cash Flow",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        if (dayByDayRows.isEmpty()) {
+                                            Text("No daily entries posted yet.", style = MaterialTheme.typography.bodySmall)
+                                        } else {
+                                            Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                                BusyTableHeaderRow(
+                                                    listOf(
+                                                        "Date" to 92,
+                                                        "Txns" to 44,
+                                                        "Sales (₹)" to 100,
+                                                        "Receipts (₹)" to 100,
+                                                        "Purchase (₹)" to 100,
+                                                        "Pay/Exp (₹)" to 100,
+                                                        "Net Cash (₹)" to 106
+                                                    )
+                                                )
+                                                dayByDayRows.forEach { d ->
+                                                    Row(
+                                                        modifier = Modifier.padding(vertical = 6.dp, horizontal = 6.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(d.date, style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), modifier = Modifier.width(92.dp))
+                                                        Text("${d.voucherCount}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), modifier = Modifier.width(44.dp))
+                                                        Text(formatInr(d.salesBilled), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.debitBlue, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
+                                                        Text(formatInr(d.receiptsCollected), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.emerald, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
+                                                        Text(formatInr(d.purchasesBilled), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.creditRed, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
+                                                        Text(formatInr(d.paymentsAndKharcha), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.creditRed, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
+                                                        Text(
+                                                            formatInr(d.netCashFlow),
+                                                            style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = if (d.netCashFlow >= 0) solarColors.emerald else solarColors.creditRed,
+                                                            textAlign = TextAlign.End,
+                                                            modifier = Modifier.width(106.dp)
+                                                        )
+                                                    }
+                                                    HorizontalDivider(color = solarColors.gridBorderStrong)
+                                                }
+                                                Row(
+                                                    modifier = Modifier
+                                                        .background(solarColors.gridHeader)
+                                                        .padding(vertical = 8.dp, horizontal = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text("TOTAL", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.width(136.dp))
+                                                    Text(formatInr(dayByDayRows.sumOf { it.salesBilled }), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), fontWeight = FontWeight.Bold, color = solarColors.debitBlue, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
+                                                    Text(formatInr(dayByDayRows.sumOf { it.receiptsCollected }), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), fontWeight = FontWeight.Bold, color = solarColors.emerald, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
+                                                    Text(formatInr(dayByDayRows.sumOf { it.purchasesBilled }), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), fontWeight = FontWeight.Bold, color = solarColors.creditRed, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
+                                                    Text(formatInr(dayByDayRows.sumOf { it.paymentsAndKharcha }), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), fontWeight = FontWeight.Bold, color = solarColors.creditRed, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
+                                                    val totalCash = dayByDayRows.sumOf { it.netCashFlow }
+                                                    Text(formatInr(totalCash), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), fontWeight = FontWeight.Bold, color = if (totalCash >= 0) solarColors.emerald else solarColors.creditRed, textAlign = TextAlign.End, modifier = Modifier.width(106.dp))
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -531,8 +671,9 @@ fun BusyAccountingScreen(
                                     BusyAccountingEngine.computeTrialBalance(accounts, vouchers)
                                 }
                                 Card(
+                                    shape = RoundedCornerShape(8.dp),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, solarColors.hairlineBorder)
+                                    border = BorderStroke(1.dp, solarColors.gridBorderStrong)
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text("Trial Balance (Group-Wise Dr / Cr)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -547,20 +688,20 @@ fun BusyAccountingScreen(
                                                 Text(g.group.label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1.4f))
                                                 Text(
                                                     if (g.debitTotal > 0) formatInr(g.debitTotal) else "-",
-                                                    style = MaterialTheme.typography.labelSmall,
+                                                    style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
                                                     color = solarColors.debitBlue,
                                                     textAlign = TextAlign.End,
                                                     modifier = Modifier.weight(1f)
                                                 )
                                                 Text(
                                                     if (g.creditTotal > 0) formatInr(g.creditTotal) else "-",
-                                                    style = MaterialTheme.typography.labelSmall,
+                                                    style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
                                                     color = solarColors.creditRed,
                                                     textAlign = TextAlign.End,
                                                     modifier = Modifier.weight(1f)
                                                 )
                                             }
-                                            HorizontalDivider(color = solarColors.hairlineBorder)
+                                            HorizontalDivider(color = solarColors.gridBorderStrong)
                                         }
                                         Row(
                                             modifier = Modifier
@@ -570,21 +711,96 @@ fun BusyAccountingScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Text("TOTAL", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                                            Text("Dr ${formatInr(tb.grandDebit)}", style = MaterialTheme.typography.labelSmall, color = solarColors.debitBlue)
-                                            Text("Cr ${formatInr(tb.grandCredit)}", style = MaterialTheme.typography.labelSmall, color = solarColors.creditRed)
+                                            Text("Dr ${formatInr(tb.grandDebit)}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.debitBlue)
+                                            Text("Cr ${formatInr(tb.grandCredit)}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.creditRed)
                                         }
                                         Spacer(Modifier.height(6.dp))
                                         Text("P&L / Balance Sheet Snapshot", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text("Sales Income: ${formatInr(tb.totalSalesIncome)}", style = MaterialTheme.typography.bodySmall, color = solarColors.emerald)
-                                            Text("Purchases & Exp: ${formatInr(tb.totalPurchaseAndExpenses)}", style = MaterialTheme.typography.bodySmall, color = solarColors.creditRed)
+                                            Text("Sales Income: ${formatInr(tb.totalSalesIncome)}", style = MaterialTheme.typography.bodySmall.merge(TabularNumberStyle), color = solarColors.emerald)
+                                            Text("Purchases & Exp: ${formatInr(tb.totalPurchaseAndExpenses)}", style = MaterialTheme.typography.bodySmall.merge(TabularNumberStyle), color = solarColors.creditRed)
                                         }
                                         Text(
                                             "Net Profit / Surplus: ${formatInr(tb.netProfit)}",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontFamily = JetBrainsMonoFontFamily,
+                                            style = MaterialTheme.typography.titleMedium.merge(TabularNumberStyle),
                                             color = if (tb.netProfit >= 0) solarColors.emerald else solarColors.creditRed
                                         )
+                                    }
+                                }
+                            }
+                        }
+
+                        BusyReportTab.PARTY_COSTING -> {
+                            if (partyCostingRows.isEmpty()) {
+                                item { BusyEmptyNotice("No parties in pipeline for Party Costing & Profit Report.") }
+                            } else {
+                                items(partyCostingRows, key = { it.party.id }) { row ->
+                                    val p = row.party
+                                    val pPanels = remember(dcrPanels, p.id) { dcrPanels.filter { it.linkedPartyId == p.id } }
+                                    val pMeters = remember(solarMeters, p.id) { solarMeters.filter { it.installedPartyId == p.id } }
+                                    Card(
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                        border = BorderStroke(1.dp, solarColors.gridBorderStrong),
+                                        modifier = Modifier.testTag("party_costing_card_${p.id}")
+                                    ) {
+                                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(p.partyName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                                    Text(
+                                                        "${p.division.label} • ${p.capacityKw} kW • ${p.leadSource.shortLabel}",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Surface(
+                                                    color = if (row.netProfit >= 0) LimeSoft else MaterialTheme.colorScheme.errorContainer,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = String.format(Locale.US, "%.1f%% Margin", row.marginPct),
+                                                        style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (row.netProfit >= 0) Color(0xFF2B4D12) else solarColors.creditRed,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                    )
+                                                }
+                                            }
+                                            HorizontalDivider(color = solarColors.gridBorderStrong)
+                                            CostingLineRow("Contract Deal Value", formatInr(row.dealValue, true), solarColors.debitBlue)
+                                            CostingLineRow("(-) Main Solar Hardware (${pPanels.size} Panels, ${pMeters.size} Meters, BOS)", "- ${formatInr(row.mainMaterialCost, true)}", solarColors.creditRed)
+                                            CostingLineRow("(-) On-Site Purchases (${p.sitePurchases.size} Bills)", "- ${formatInr(row.onSitePurchaseCost, true)}", solarColors.creditRed)
+                                            CostingLineRow("(-) Daily Kharcha & Labour", "- ${formatInr(row.dailyKharchaCost, true)}", solarColors.creditRed)
+                                            CostingLineRow("(-) Referral Commission", "- ${formatInr(row.referralCommission, true)}", solarColors.creditRed)
+                                            HorizontalDivider(color = solarColors.gridBorderStrong)
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    "Net Profit: ${formatInr(row.netProfit, true)}",
+                                                    style = MaterialTheme.typography.titleSmall.merge(TabularNumberStyle),
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (row.netProfit >= 0) LimeGreen else solarColors.creditRed
+                                                )
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        ExportPrintHelper.printPartyCostingReportA4(context, row, pPanels, pMeters)
+                                                    },
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                ) {
+                                                    Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text("Costing PDF", style = MaterialTheme.typography.labelSmall)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -596,10 +812,11 @@ fun BusyAccountingScreen(
                             } else {
                                 items(aging, key = { it.partyId }) { row ->
                                     Card(
+                                        shape = RoundedCornerShape(8.dp),
                                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                                         border = BorderStroke(
                                             1.dp,
-                                            if (row.isOverdueAlert) MaterialTheme.colorScheme.error else solarColors.hairlineBorder
+                                            if (row.isOverdueAlert) MaterialTheme.colorScheme.error else solarColors.gridBorderStrong
                                         )
                                     ) {
                                         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -620,9 +837,9 @@ fun BusyAccountingScreen(
                                                 }
                                             }
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text("Total: ${formatInr(row.projectValue)}", style = MaterialTheme.typography.labelSmall)
-                                                Text("Recd: ${formatInr(row.receivedAmount)}", style = MaterialTheme.typography.labelSmall, color = solarColors.emerald)
-                                                Text("Pending: ${formatInr(row.pendingDues)}", style = MaterialTheme.typography.labelSmall, color = solarColors.creditRed)
+                                                Text("Total: ${formatInr(row.projectValue)}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle))
+                                                Text("Recd: ${formatInr(row.receivedAmount)}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.emerald)
+                                                Text("Pending: ${formatInr(row.pendingDues)}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.creditRed)
                                             }
                                             Text(
                                                 "Loan 1st Tranche: ${formatInr(row.loan1Amount)} (${if (row.loan1Received) "Received" else "Pending"}) • Loan 2nd: ${formatInr(row.loan2Amount)} (${if (row.loan2Received) "Received" else "Pending"})",
@@ -638,8 +855,9 @@ fun BusyAccountingScreen(
                         BusyReportTab.COST_CENTERS -> {
                             items(ccRows, key = { it.source.name }) { cc ->
                                 Card(
+                                    shape = RoundedCornerShape(8.dp),
                                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                    border = BorderStroke(1.dp, solarColors.hairlineBorder)
+                                    border = BorderStroke(1.dp, solarColors.gridBorderStrong)
                                 ) {
                                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Row(
@@ -649,28 +867,116 @@ fun BusyAccountingScreen(
                                             Text(cc.source.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                             Text("${cc.partyCount} Projects", style = MaterialTheme.typography.labelSmall, color = solarColors.solarAmber)
                                         }
-                                        HorizontalDivider()
+                                        HorizontalDivider(color = solarColors.gridBorderStrong)
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text("Revenue / Sales", style = MaterialTheme.typography.bodySmall)
-                                            Text(formatInr(cc.totalSales), style = MaterialTheme.typography.labelSmall, color = solarColors.debitBlue)
+                                            Text(formatInr(cc.totalSales), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.debitBlue)
                                         }
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text("Cash Receipts", style = MaterialTheme.typography.bodySmall)
-                                            Text(formatInr(cc.totalReceipts), style = MaterialTheme.typography.labelSmall, color = solarColors.emerald)
+                                            Text(formatInr(cc.totalReceipts), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.emerald)
                                         }
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text("Purchases & Direct Costs", style = MaterialTheme.typography.bodySmall)
-                                            Text(formatInr(cc.totalDirectCosts), style = MaterialTheme.typography.labelSmall, color = solarColors.creditRed)
+                                            Text(formatInr(cc.totalDirectCosts), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.creditRed)
                                         }
                                         if (canSeePartnerSplit) {
-                                            HorizontalDivider()
+                                            HorizontalDivider(color = solarColors.gridBorderStrong)
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                                 Text("Partner / Reference Split (Owner Only)", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
-                                                Text(formatInr(cc.partnerSplitAmount), style = MaterialTheme.typography.labelSmall, color = solarColors.solarAmber)
+                                                Text(formatInr(cc.partnerSplitAmount), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.solarAmber)
                                             }
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                                 Text("NB Engineering Net Margin", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                                Text(formatInr(cc.nbNetProfit), style = MaterialTheme.typography.titleSmall, fontFamily = JetBrainsMonoFontFamily, color = solarColors.emerald)
+                                                Text(formatInr(cc.nbNetProfit), style = MaterialTheme.typography.titleSmall.merge(TabularNumberStyle), color = solarColors.emerald)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        BusyReportTab.REFERRALS -> {
+                            item {
+                                val totalComm = referralRows.sumOf { it.commissionAmount }
+                                val paidComm = referralRows.filter { it.isPaid }.sumOf { it.commissionAmount }
+                                val pendingComm = totalComm - paidComm
+                                Card(
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, solarColors.gridBorderStrong)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text("Referral Commission Ledger", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("Total: ${formatInr(totalComm)}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.debitBlue)
+                                            Text("Paid: ${formatInr(paidComm)}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = LimeGreen)
+                                            Text("Pending: ${formatInr(pendingComm)}", style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.creditRed)
+                                        }
+                                    }
+                                }
+                            }
+                            if (referralRows.isEmpty()) {
+                                item { BusyEmptyNotice("No referral or Thakur Ji partner commission leads yet.") }
+                            } else {
+                                items(referralRows, key = { it.partyId }) { ref ->
+                                    Card(
+                                        shape = RoundedCornerShape(8.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                        border = BorderStroke(1.dp, solarColors.gridBorderStrong)
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(ref.partyName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                                    Text(
+                                                        "${ref.leadSource.label} • ${ref.referrerName}" +
+                                                            if (ref.referrerPhone.isNotBlank()) " (${ref.referrerPhone})" else "",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Surface(
+                                                    color = if (ref.isPaid) LimeSoft else MaterialTheme.colorScheme.errorContainer,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = if (ref.isPaid) "PAID" else "PENDING",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (ref.isPaid) Color(0xFF2B4D12) else solarColors.creditRed,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                    )
+                                                }
+                                            }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column {
+                                                    Text(
+                                                        "Deal: ${formatInr(ref.dealValue)} • ${String.format(Locale.US, "%.1f", ref.commissionPct)}% = ${formatInr(ref.commissionAmount)}",
+                                                        style = MaterialTheme.typography.labelMedium.merge(TabularNumberStyle),
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaroonPrimary
+                                                    )
+                                                    if (ref.isPaid && ref.payoutDate.isNotBlank()) {
+                                                        Text("Settled on ${ref.payoutDate}", style = MaterialTheme.typography.labelSmall, color = LimeGreen)
+                                                    }
+                                                }
+                                                OutlinedButton(
+                                                    onClick = { onMarkReferralPaid(ref.partyId, !ref.isPaid) },
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                ) {
+                                                    Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(Modifier.width(4.dp))
+                                                    Text(if (ref.isPaid) "Mark Pending" else "Mark Paid", style = MaterialTheme.typography.labelSmall)
+                                                }
                                             }
                                         }
                                     }
@@ -691,8 +997,9 @@ fun BusyAccountingScreen(
                     when (gstSubTab) {
                         0 -> item {
                             Card(
+                                shape = RoundedCornerShape(8.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                border = BorderStroke(1.dp, solarColors.hairlineBorder)
+                                border = BorderStroke(1.dp, solarColors.gridBorderStrong)
                             ) {
                                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text("Input vs Output GST Summary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -700,11 +1007,11 @@ fun BusyAccountingScreen(
                                     GstCompareRow("CGST", gst.outputCgst, gst.inputCgst)
                                     GstCompareRow("SGST", gst.outputSgst, gst.inputSgst)
                                     GstCompareRow("IGST", gst.outputIgst, gst.inputIgst)
-                                    HorizontalDivider()
+                                    HorizontalDivider(color = solarColors.gridBorderStrong)
                                     GstCompareRow("TOTAL GST", gst.totalOutputGst, gst.totalInputGst)
                                     Surface(
                                         color = if (gst.netGstPayable > 0) MaterialTheme.colorScheme.errorContainer else solarColors.emeraldContainer,
-                                        shape = RoundedCornerShape(10.dp),
+                                        shape = RoundedCornerShape(6.dp),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text(
@@ -713,8 +1020,7 @@ fun BusyAccountingScreen(
                                             } else {
                                                 "Excess Input Tax Credit (ITC): ${formatInr(-gst.netGstPayable, true)}"
                                             },
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontFamily = JetBrainsMonoFontFamily,
+                                            style = MaterialTheme.typography.titleSmall.merge(TabularNumberStyle),
                                             modifier = Modifier.padding(10.dp)
                                         )
                                     }
@@ -908,6 +1214,7 @@ private fun BusyVoucherRowCard(
     voucher: BusyVoucher,
     canDelete: Boolean,
     onPrint: () -> Unit,
+    onPrintChallan: (() -> Unit)? = null,
     onDelete: () -> Unit
 ) {
     val solarColors = LocalSolarColors.current
@@ -915,8 +1222,8 @@ private fun BusyVoucherRowCard(
 
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, solarColors.hairlineBorder),
-        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, solarColors.gridBorderStrong),
+        shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -928,7 +1235,7 @@ private fun BusyVoucherRowCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(
                         color = if (isReceiptOrSale) solarColors.emeraldContainer else solarColors.solarAmberContainer,
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(4.dp)
                     ) {
                         Text(
                             "${voucher.type.label} (${voucher.type.shortcut})",
@@ -938,12 +1245,11 @@ private fun BusyVoucherRowCard(
                         )
                     }
                     Spacer(Modifier.width(8.dp))
-                    Text(voucher.voucherNo, style = MaterialTheme.typography.labelSmall, fontFamily = JetBrainsMonoFontFamily)
+                    Text(voucher.voucherNo, style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle))
                 }
                 Text(
                     formatInr(voucher.totalAmount, true),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontFamily = JetBrainsMonoFontFamily,
+                    style = MaterialTheme.typography.titleSmall.merge(TabularNumberStyle),
                     fontWeight = FontWeight.Bold,
                     color = if (isReceiptOrSale) solarColors.debitBlue else solarColors.creditRed
                 )
@@ -965,12 +1271,29 @@ private fun BusyVoucherRowCard(
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                if (onPrintChallan != null) {
+                    TextButton(onClick = onPrintChallan) {
+                        Icon(Icons.Filled.LocalShipping, contentDescription = "Delivery Challan PDF", modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Challan")
+                    }
+                }
+                val printLabel = when (voucher.type) {
+                    BusyVoucherType.SALES -> "Tax Invoice"
+                    BusyVoucherType.RECEIPT -> "Receipt PDF"
+                    else -> "Print A4"
+                }
                 TextButton(onClick = onPrint) {
-                    Icon(Icons.Filled.Print, contentDescription = "Print A4 Voucher", modifier = Modifier.size(16.dp))
+                    Icon(
+                        if (voucher.type == BusyVoucherType.RECEIPT) Icons.Filled.ReceiptLong else Icons.Filled.Print,
+                        contentDescription = printLabel,
+                        modifier = Modifier.size(16.dp)
+                    )
                     Spacer(Modifier.width(4.dp))
-                    Text("Print A4")
+                    Text(printLabel)
                 }
                 if (canDelete) {
                     IconButton(onClick = onDelete) {
@@ -979,6 +1302,24 @@ private fun BusyVoucherRowCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CostingLineRow(label: String, amount: String, color: Color) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(8.dp))
+        Text(
+            amount,
+            style = MaterialTheme.typography.labelMedium.merge(TabularNumberStyle),
+            color = color,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
@@ -992,8 +1333,8 @@ private fun GstCompareRow(label: String, output: Double, input: Double) {
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(120.dp))
-        Text(formatInr(output, true), style = MaterialTheme.typography.labelSmall, color = solarColors.creditRed, modifier = Modifier.width(100.dp))
-        Text(formatInr(input, true), style = MaterialTheme.typography.labelSmall, color = solarColors.emerald, modifier = Modifier.width(100.dp))
+        Text(formatInr(output, true), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.creditRed, modifier = Modifier.width(100.dp))
+        Text(formatInr(input, true), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), color = solarColors.emerald, modifier = Modifier.width(100.dp))
     }
 }
 
@@ -1001,14 +1342,15 @@ private fun GstCompareRow(label: String, output: Double, input: Double) {
 private fun GstRegisterCard(v: BusyVoucher, tag: String) {
     val solarColors = LocalSolarColors.current
     Card(
+        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, solarColors.hairlineBorder),
+        border = BorderStroke(1.dp, solarColors.gridBorderStrong),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("${v.voucherNo} • ${v.partyAccountName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Text(formatInr(v.totalAmount, true), style = MaterialTheme.typography.labelLarge, fontFamily = JetBrainsMonoFontFamily)
+                Text(formatInr(v.totalAmount, true), style = MaterialTheme.typography.labelLarge.merge(TabularNumberStyle))
             }
             Text(
                 "$tag • ${v.date} • GSTIN: ${v.partyGstin.ifBlank { "URD / B2C" }}",
@@ -1017,7 +1359,7 @@ private fun GstRegisterCard(v: BusyVoucher, tag: String) {
             )
             Text(
                 "Taxable: ${formatInr(v.taxableAmount, true)} | CGST: ${formatInr(v.cgstAmount, true)} | SGST: ${formatInr(v.sgstAmount, true)} | IGST: ${formatInr(v.igstAmount, true)}",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
                 color = solarColors.debitBlue
             )
         }
@@ -1120,7 +1462,7 @@ private fun AddItemMasterDialog(
     onSave: (String, String, String, Double, Double, Double, Double) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var hsn by remember { mutableStateOf("854140") }
+    var hsn by remember { mutableStateOf("85414300") }
     var unit by remember { mutableStateOf("Nos") }
     var gst by remember { mutableStateOf("18") }
     var saleRate by remember { mutableStateOf("0") }

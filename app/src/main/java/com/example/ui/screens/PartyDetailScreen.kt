@@ -34,13 +34,16 @@ import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -50,9 +53,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -75,30 +78,92 @@ import coil.compose.AsyncImage
 import com.example.core.ExportPrintHelper
 import com.example.core.RolePermissions
 import com.example.core.formatInr
+import com.example.data.model.BusyItem
+import com.example.data.model.BusyVoucher
+import com.example.data.model.CostingStructureType
 import com.example.data.model.DcrPanel
 import com.example.data.model.DocumentCategory
+import com.example.data.model.LeadSource
+import com.example.data.model.LeadStatus
 import com.example.data.model.PartyDocument
 import com.example.data.model.PartyProject
+import com.example.data.model.ProjectDivision
 import com.example.data.model.RawMaterial
+import com.example.data.model.RoofStructureType
+import com.example.data.model.SiteKharchaEntry
+import com.example.data.model.SitePurchasePaymentSource
 import com.example.data.model.SolarMeter
+import com.example.data.model.SolarSystemType
 import com.example.data.model.StaffRole
 import com.example.data.model.WorkflowSection
-import com.example.ui.theme.DeepNavy
-import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.LimeGreen
 import com.example.ui.theme.LocalSolarColors
+import com.example.ui.theme.MaroonPrimary
+import com.example.ui.theme.TabularNumberStyle
+import com.example.ui.viewmodel.AiPhotoPlacementUiState
 import java.io.File
 
 @Composable
 fun PartyDetailScreen(
     party: PartyProject,
     role: StaffRole,
+    currentUserImprestBalance: Double,
     allocatedPanels: List<DcrPanel>,
     allocatedMeters: List<SolarMeter>,
     rawMaterials: List<RawMaterial>,
+    partyKharcha: List<SiteKharchaEntry>,
+    busyVouchers: List<BusyVoucher>,
+    busyItems: List<BusyItem>,
+    aiPhotoState: AiPhotoPlacementUiState,
+    onPickRooftopPhoto: (Uri) -> Unit,
+    onPickInverterPhoto: (Uri) -> Unit,
+    onGenerateRooftopAi: (Double, Int, CostingStructureType, SolarSystemType) -> Unit,
+    onGenerateInverterAi: (Double, SolarSystemType) -> Unit,
+    onClearAiError: () -> Unit,
+    onApplyQuoteToParty: (String, Double, RoofStructureType, Double, Double, String) -> Unit,
+    onApproveAndConvertOrder: (
+        existingPartyId: String?,
+        customerName: String,
+        customerMobile: String,
+        siteLocation: String,
+        consumerNo: String,
+        capacityKw: Double,
+        roofType: RoofStructureType,
+        quotedRatePerKw: Double,
+        dealValue: Double,
+        subsidyAmount: Double,
+        surveyNotes: String
+    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _ -> },
+    onShowMessage: (String) -> Unit,
     onBack: () -> Unit,
     onToggleStage: (String) -> Unit,
     onAddSiteNote: (String) -> Unit,
-    onUploadDocument: (Uri, String, DocumentCategory, String) -> Unit
+    onUploadDocument: (Uri, String, DocumentCategory, String) -> Unit,
+    onUpdateLeadDetails: (
+        mobile: String,
+        cityOrLocation: String,
+        consumerNo: String,
+        capacityKw: Double,
+        leadSource: LeadSource,
+        referrerName: String,
+        referrerPhone: String,
+        leadDate: String,
+        roofStructureType: RoofStructureType,
+        quotedRatePerKw: Double,
+        dealValue: Double,
+        nextFollowUpDate: String,
+        siteSurveyNotes: String,
+        leadStatus: LeadStatus,
+        division: ProjectDivision
+    ) -> Unit,
+    onAddSitePurchase: (
+        itemDescription: String,
+        quantity: String,
+        vendorName: String,
+        amount: Double,
+        paymentSource: SitePurchasePaymentSource,
+        billPhotoUri: Uri?
+    ) -> Unit
 ) {
     BackHandler { onBack() }
 
@@ -111,6 +176,7 @@ fun PartyDetailScreen(
     var docSearch by remember { mutableStateOf("") }
     var selectedDocCat by remember { mutableStateOf<DocumentCategory?>(null) }
     var pendingUploadUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingUploadDefaultCat by remember { mutableStateOf(DocumentCategory.GEOTAG_PHOTO) }
     var previewDoc by remember { mutableStateOf<PartyDocument?>(null) }
     var noteInput by remember { mutableStateOf("") }
 
@@ -118,14 +184,19 @@ fun PartyDetailScreen(
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        if (uri != null) pendingUploadUri = uri
+        if (uri != null) {
+            pendingUploadDefaultCat = DocumentCategory.GEOTAG_PHOTO
+            pendingUploadUri = uri
+        }
     }
 
     // Zero-permission SAF Document Picker for PDFs/Invoices/DCR
     val docPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri != null) pendingUploadUri = uri
+        if (uri != null) {
+            pendingUploadUri = uri
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -154,20 +225,20 @@ fun PartyDetailScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${party.capacityKw} kW • ${party.leadSource.label}" +
+                            text = "${party.division.shortLabel} • ${party.capacityKw} kW • ${party.leadSource.label}" +
                                 if (party.consumerNumber.isNotBlank()) " • K-No: ${party.consumerNumber}" else "",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFCBD5E1)
+                            color = Color(0xFFFFDAD8)
                         )
                     }
                     Surface(
-                        color = solarColors.emerald,
-                        shape = RoundedCornerShape(8.dp)
+                        color = LimeGreen,
+                        shape = RoundedCornerShape(6.dp)
                     ) {
                         Text(
                             text = "${(party.progressFraction * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontFamily = JetBrainsMonoFontFamily,
+                            style = MaterialTheme.typography.labelLarge.merge(TabularNumberStyle),
+                            fontWeight = FontWeight.Bold,
                             color = Color.White,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
@@ -183,36 +254,82 @@ fun PartyDetailScreen(
                             .padding(horizontal = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        MiniStat("Value", formatInr(party.projectValue), Color(0xFF93C5FD))
-                        MiniStat("Received", formatInr(party.receivedAmount), Color(0xFF6EE7B7))
-                        MiniStat("Pending", formatInr(party.pendingAmount), Color(0xFFFCA5A5))
+                        MiniStat("Value", formatInr(party.projectValue), Color.White)
+                        MiniStat("Received", formatInr(party.receivedAmount), Color(0xFFDCEDC8))
+                        MiniStat("Pending", formatInr(party.pendingAmount), Color(0xFFFEE2E2))
                         MiniStat("Subsidy", formatInr(party.subsidyAmount), Color(0xFFFDE68A))
                     }
                 }
             }
         }
 
-        // Sub-Tabs
-        TabRow(selectedTabIndex = activeSubTab) {
+        // 6 Sub-Tabs
+        ScrollableTabRow(selectedTabIndex = activeSubTab, edgePadding = 8.dp) {
             Tab(
                 selected = activeSubTab == 0,
                 onClick = { activeSubTab = 0 },
-                text = { Text("5 Workflows") }
+                text = { Text("Lead Details") }
             )
             Tab(
                 selected = activeSubTab == 1,
                 onClick = { activeSubTab = 1 },
-                text = { Text("Doc Vault (${party.documents.size})") }
+                text = { Text("3D, Photo & Cost") }
             )
             Tab(
                 selected = activeSubTab == 2,
                 onClick = { activeSubTab = 2 },
+                text = { Text("5 Workflows") }
+            )
+            Tab(
+                selected = activeSubTab == 3,
+                onClick = { activeSubTab = 3 },
+                text = { Text("🛒 On-Site Purchase (${party.sitePurchases.size})") }
+            )
+            Tab(
+                selected = activeSubTab == 4,
+                onClick = { activeSubTab = 4 },
+                text = { Text("Doc Vault (${party.documents.size})") }
+            )
+            Tab(
+                selected = activeSubTab == 5,
+                onClick = { activeSubTab = 5 },
                 text = { Text("Site & Hardware") }
             )
         }
 
         when (activeSubTab) {
             0 -> {
+                PartyLeadDetailsTab(
+                    party = party,
+                    role = role,
+                    allocatedPanels = allocatedPanels,
+                    allocatedMeters = allocatedMeters,
+                    rawMaterials = rawMaterials,
+                    partyKharcha = partyKharcha,
+                    onUpdateLeadDetails = onUpdateLeadDetails
+                )
+            }
+
+            1 -> {
+                SiteSurvey3DCostingScreen(
+                    role = role,
+                    parties = listOf(party),
+                    busyVouchers = busyVouchers,
+                    busyItems = busyItems,
+                    linkedParty = party,
+                    aiPhotoState = aiPhotoState,
+                    onPickRooftopPhoto = onPickRooftopPhoto,
+                    onPickInverterPhoto = onPickInverterPhoto,
+                    onGenerateRooftopAi = onGenerateRooftopAi,
+                    onGenerateInverterAi = onGenerateInverterAi,
+                    onClearAiError = onClearAiError,
+                    onApplyQuoteToParty = onApplyQuoteToParty,
+                    onApproveAndConvertOrder = onApproveAndConvertOrder,
+                    onShowMessage = onShowMessage
+                )
+            }
+
+            2 -> {
                 // 5 SEPARATE WORKFLOW SECTIONS
                 val visibleSections = WorkflowSection.entries.filter { sec ->
                     sec != WorkflowSection.LOAN || canSeeLoan
@@ -315,8 +432,17 @@ fun PartyDetailScreen(
                 }
             }
 
-            1 -> {
-                // SEARCHABLE DOCUMENT VAULT
+            3 -> {
+                PartySitePurchaseTab(
+                    party = party,
+                    role = role,
+                    supervisorImprestBalance = currentUserImprestBalance,
+                    onAddSitePurchase = onAddSitePurchase
+                )
+            }
+
+            4 -> {
+                // SEARCHABLE DOCUMENT VAULT + DCR PDF GENERATOR
                 val filteredDocs = remember(party.documents, docSearch, selectedDocCat) {
                     party.documents.filter { d ->
                         val catOk = selectedDocCat == null || d.category == selectedDocCat
@@ -336,32 +462,64 @@ fun PartyDetailScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    photoPickerLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("vault_upload_photo_btn")
-                            ) {
-                                Icon(Icons.Filled.AddAPhoto, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Geotag Photo")
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        photoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("vault_upload_photo_btn")
+                                ) {
+                                    Icon(Icons.Filled.AddAPhoto, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Geotag Photo")
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        pendingUploadDefaultCat = DocumentCategory.KYC_DISCOM
+                                        docPickerLauncher.launch(arrayOf("application/pdf", "image/*", "*/*"))
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("vault_upload_doc_btn")
+                                ) {
+                                    Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("PDF / KYC")
+                                }
                             }
-                            OutlinedButton(
-                                onClick = {
-                                    docPickerLauncher.launch(arrayOf("application/pdf", "image/*", "*/*"))
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("vault_upload_doc_btn")
-                            ) {
-                                Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("PDF / DCR / KYC")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        ExportPrintHelper.printDcrCertificatePdf(context, party, allocatedPanels)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("generate_dcr_pdf_btn")
+                                ) {
+                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Generate DCR PDF")
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        pendingUploadDefaultCat = DocumentCategory.DCR_CERT
+                                        docPickerLauncher.launch(arrayOf("application/pdf", "image/*"))
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("upload_oem_dcr_btn")
+                                ) {
+                                    Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("OEM DCR PDF")
+                                }
                             }
                         }
                     }
@@ -426,8 +584,8 @@ fun PartyDetailScreen(
                 }
             }
 
-            2 -> {
-                // ALLOCATED HARDWARE + SITE LOGS
+            5 -> {
+                // ALLOCATED HARDWARE + LEKHA JOKHA KHARCHA + SITE LOGS
                 val siteMaterialLogs = rawMaterials.flatMap { rm ->
                     rm.issueLogs.filter { it.partyId == party.id }.map { log ->
                         "${rm.name}: ${log.quantity} ${rm.unit} (${log.date} by ${log.issuedBy})"
@@ -441,12 +599,36 @@ fun PartyDetailScreen(
                 ) {
                     item {
                         Card(
+                            shape = RoundedCornerShape(8.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, solarColors.hairlineBorder),
+                            border = BorderStroke(1.dp, solarColors.gridBorderStrong),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
-                                Text("Allocated DCR Panels (${allocatedPanels.size})", style = MaterialTheme.typography.titleSmall)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Allocated DCR Panels (${allocatedPanels.size})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                    OutlinedButton(
+                                        onClick = {
+                                            ExportPrintHelper.printPartyHardwareChallanA4(
+                                                context,
+                                                party,
+                                                allocatedPanels,
+                                                allocatedMeters,
+                                                rawMaterials
+                                            )
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.testTag("party_delivery_challan_pdf_btn")
+                                    ) {
+                                        Icon(Icons.Filled.LocalShipping, contentDescription = "Delivery Challan PDF", modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Delivery Challan PDF", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
                                 Spacer(Modifier.height(6.dp))
                                 if (allocatedPanels.isEmpty()) {
                                     Text("No DCR panels allocated yet. Allocate from Inventory tab.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -480,6 +662,17 @@ fun PartyDetailScreen(
                                 } else {
                                     siteMaterialLogs.forEach { line ->
                                         Text("• $line", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                                if (partyKharcha.isNotEmpty()) {
+                                    Spacer(Modifier.height(10.dp))
+                                    Text("Lekha Jokha Site Kharcha (${partyKharcha.size})", style = MaterialTheme.typography.titleSmall)
+                                    Spacer(Modifier.height(4.dp))
+                                    partyKharcha.forEach { kh ->
+                                        Text(
+                                            "• ${kh.workerOrTitle} (${kh.category.label}) — ${formatInr(kh.amount)} [${kh.date}]",
+                                            style = MaterialTheme.typography.bodySmall.merge(TabularNumberStyle)
+                                        )
                                     }
                                 }
                             }
@@ -549,6 +742,7 @@ fun PartyDetailScreen(
     // Metadata modal after picking photo or PDF
     pendingUploadUri?.let { uri ->
         UploadDocumentDialog(
+            initialCategory = pendingUploadDefaultCat,
             onDismiss = { pendingUploadUri = null },
             onConfirm = { title, cat, notes ->
                 onUploadDocument(uri, title, cat, notes)
@@ -618,8 +812,8 @@ fun PartyDetailScreen(
 @Composable
 private fun MiniStat(label: String, value: String, valueColor: Color) {
     Column {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Color(0xFF94A3B8))
-        Text(value, style = MaterialTheme.typography.labelLarge, fontFamily = JetBrainsMonoFontFamily, color = valueColor)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Color(0xFFFFDAD8))
+        Text(value, style = MaterialTheme.typography.labelLarge.merge(TabularNumberStyle), color = valueColor, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -694,11 +888,12 @@ private fun VaultDocumentCard(
 
 @Composable
 private fun UploadDocumentDialog(
+    initialCategory: DocumentCategory = DocumentCategory.GEOTAG_PHOTO,
     onDismiss: () -> Unit,
     onConfirm: (String, DocumentCategory, String) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf(DocumentCategory.GEOTAG_PHOTO) }
+    var category by remember(initialCategory) { mutableStateOf(initialCategory) }
     var notes by remember { mutableStateOf("") }
 
     AlertDialog(

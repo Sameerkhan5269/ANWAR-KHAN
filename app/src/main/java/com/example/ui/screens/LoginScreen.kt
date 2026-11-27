@@ -7,8 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,22 +52,26 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.model.StaffRole
 import com.example.data.model.StaffUser
-import com.example.ui.theme.DeepNavy
+import com.example.ui.components.CompanyCircularLogo
 import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.LimeGreen
 import com.example.ui.theme.LocalSolarColors
-import com.example.ui.theme.SolarAmber
+import com.example.ui.theme.MaroonDark
+import com.example.ui.theme.MaroonPrimary
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun LoginScreen(
     staffUsers: List<StaffUser>,
@@ -111,8 +113,8 @@ fun LoginScreen(
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(
-                                    DeepNavy.copy(alpha = 0.65f),
-                                    DeepNavy.copy(alpha = 0.92f)
+                                    MaroonPrimary.copy(alpha = 0.72f),
+                                    MaroonDark.copy(alpha = 0.94f)
                                 )
                             )
                         )
@@ -125,32 +127,22 @@ fun LoginScreen(
                     verticalArrangement = Arrangement.Bottom
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(SolarAmber),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.SolarPower,
-                                contentDescription = "NB Solar ERP Logo",
-                                tint = DeepNavy,
-                                modifier = Modifier.size(26.dp)
-                            )
-                        }
+                        CompanyCircularLogo(
+                            size = 52.dp,
+                            borderColor = LimeGreen
+                        )
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "NB ENGINEERING WORKS & ELECTRICALS",
+                                text = "NB ENGINEERING WORKS AND ELECTRICALS",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Road No. 5, Madri Industrial Area, Udaipur (Raj.)",
+                                text = "Rama Phosphates Ltd. Plant, Shed No. 1, Udaipur (Raj.)",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFCBD5E1)
+                                color = Color(0xFFFFE4E2)
                             )
                         }
                     }
@@ -160,9 +152,9 @@ fun LoginScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            color = solarColors.emerald.copy(alpha = 0.22f),
+                            color = LimeGreen,
                             shape = RoundedCornerShape(999.dp),
-                            border = BorderStroke(1.dp, solarColors.emerald.copy(alpha = 0.5f))
+                            border = BorderStroke(1.dp, Color(0xFFDCEDC8))
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -171,21 +163,22 @@ fun LoginScreen(
                                 Icon(
                                     Icons.Outlined.CloudDone,
                                     contentDescription = null,
-                                    tint = Color(0xFF6EE7B7),
+                                    tint = Color.White,
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
                                     "Supabase Live Sync",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFFD1FAE5)
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
                                 )
                             }
                         }
                         Surface(
-                            color = SolarAmber.copy(alpha = 0.2f),
+                            color = Color.White.copy(alpha = 0.16f),
                             shape = RoundedCornerShape(999.dp),
-                            border = BorderStroke(1.dp, SolarAmber.copy(alpha = 0.5f))
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.45f))
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -194,14 +187,14 @@ fun LoginScreen(
                                 Icon(
                                     Icons.Outlined.Security,
                                     contentDescription = null,
-                                    tint = SolarAmber,
+                                    tint = Color(0xFFDCEDC8),
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
                                     "Role Privacy Guard",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFFFEF3C7)
+                                    color = Color.White
                                 )
                             }
                         }
@@ -215,9 +208,9 @@ fun LoginScreen(
                     .padding(horizontal = 16.dp, vertical = 16.dp)
                     .widthIn(max = 520.dp)
                     .fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(10.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, solarColors.hairlineBorder),
+                border = BorderStroke(1.dp, solarColors.gridBorderStrong),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
@@ -295,12 +288,12 @@ fun LoginScreen(
                             .testTag("login_submit_button"),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = DeepNavy,
+                            containerColor = MaroonPrimary,
                             contentColor = Color.White
                         )
                     ) {
                         Text(
-                            text = "Sign In to NB Solar ERP",
+                            text = "Sign In to NB Solar & Wind ERP",
                             style = MaterialTheme.typography.labelLarge
                         )
                     }
@@ -313,14 +306,15 @@ fun LoginScreen(
                     )
                     Spacer(Modifier.height(8.dp))
 
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    WrapRow(
+                        horizontalGap = 8.dp,
+                        verticalGap = 8.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         staffUsers.forEach { staff ->
                             val isSelected = loginId.equals(staff.loginId, ignoreCase = true)
                             val isPrivateFieldRole = staff.role == StaffRole.SUPERVISOR || staff.role == StaffRole.HELPER
+                            val divTag = staff.assignedDivision?.shortLabel ?: "All"
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (isSelected) solarColors.solarAmberContainer
@@ -334,7 +328,7 @@ fun LoginScreen(
                                         loginId = staff.loginId
                                         pin = ""
                                     }
-                                    .testTag("quick_role_${staff.role.name.lowercase()}")
+                                    .testTag("quick_role_${staff.loginId}")
                             ) {
                                 Row(
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
@@ -352,7 +346,7 @@ fun LoginScreen(
                                     Spacer(Modifier.width(6.dp))
                                     Column {
                                         Text(
-                                            text = staff.displayName,
+                                            text = "${staff.displayName} ($divTag)",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.onSurface
@@ -369,6 +363,73 @@ fun LoginScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WrapRow(
+    modifier: Modifier = Modifier,
+    horizontalGap: Dp = 8.dp,
+    verticalGap: Dp = 8.dp,
+    content: @Composable () -> Unit
+) {
+    Layout(
+        content = content,
+        modifier = modifier
+    ) { measurables, constraints ->
+        val hGapPx = horizontalGap.roundToPx()
+        val vGapPx = verticalGap.roundToPx()
+        val maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
+        val childConstraints = constraints.copy(minWidth = 0, minHeight = 0)
+
+        val rows = mutableListOf<List<Placeable>>()
+        var currentRow = mutableListOf<Placeable>()
+        var currentRowWidth = 0
+
+        measurables.forEach { measurable ->
+            val placeable = measurable.measure(childConstraints)
+            val neededWidth = if (currentRow.isEmpty()) placeable.width else currentRowWidth + hGapPx + placeable.width
+            if (currentRow.isNotEmpty() && neededWidth > maxWidth) {
+                rows.add(currentRow)
+                currentRow = mutableListOf(placeable)
+                currentRowWidth = placeable.width
+            } else {
+                currentRow.add(placeable)
+                currentRowWidth = neededWidth
+            }
+        }
+        if (currentRow.isNotEmpty()) {
+            rows.add(currentRow)
+        }
+
+        val totalWidth = if (constraints.hasBoundedWidth) {
+            constraints.maxWidth
+        } else {
+            rows.maxOfOrNull { row ->
+                row.sumOf { it.width } + (row.size - 1).coerceAtLeast(0) * hGapPx
+            } ?: 0
+        }.coerceIn(constraints.minWidth, constraints.maxWidth)
+
+        val totalHeight = if (rows.isEmpty()) {
+            constraints.minHeight
+        } else {
+            val rowHeights = rows.sumOf { row -> row.maxOfOrNull { it.height } ?: 0 }
+            val gapsHeight = (rows.size - 1).coerceAtLeast(0) * vGapPx
+            (rowHeights + gapsHeight).coerceIn(constraints.minHeight, constraints.maxHeight)
+        }
+
+        layout(totalWidth, totalHeight) {
+            var y = 0
+            rows.forEach { row ->
+                var x = 0
+                val rowHeight = row.maxOfOrNull { it.height } ?: 0
+                row.forEach { placeable ->
+                    placeable.placeRelative(x = x, y = y)
+                    x += placeable.width + hGapPx
+                }
+                y += rowHeight + vGapPx
             }
         }
     }

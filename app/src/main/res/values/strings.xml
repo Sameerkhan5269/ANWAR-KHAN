@@ -1,10 +1,10 @@
 <resources>
-    <string name="app_name">NB Solar ERP</string>
-    <string name="company_full_name">NB Engineering Works and Electricals</string>
-    <string name="company_address">Road No. 5, Madri Industrial Area, Udaipur, Rajasthan</string>
-    <string name="login_subtitle">Solar EPC Operations &amp; BUSY 21 Accounting Suite</string>
+    <string name="app_name">NB Solar &amp; Wind ERP</string>
+    <string name="company_full_name">NB ENGINEERING WORKS AND ELECTRICALS</string>
+    <string name="company_address">Rama Phosphates Ltd. Plant, Ground Floor, Shed No. 1, Opp. Rama Phosphates Ltd, Udaipur, Rajasthan</string>
+    <string name="login_subtitle">Solar &amp; Wind EPC Operations &amp; BUSY 21 GST Suite</string>
     <string name="sync_live">Live Synced</string>
     <string name="sync_connecting">Syncing…</string>
-    <string name="sync_offline">Offline Cache</string>
+    <string name="sync_offline">Offline</string>
     <string name="privacy_locked_notice">Financial data hidden for your role</string>
 </resources>

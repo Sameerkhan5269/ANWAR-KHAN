@@ -1,16 +1,57 @@
 package com.example.data
 
+import com.example.data.model.KharchaCategory
+import com.example.data.model.ParsedLekhaJokhaLine
 import com.example.data.model.ParsedWhatsAppUpdate
 import com.example.data.model.PartyProject
 
 /**
  * Parses informal company WhatsApp group updates (e.g. "Ramesh Sharma 5kW installation done",
- * "Meera Devi AVVNL meter tested and net meter installed") and maps them to exact parties
- * and workflow checkpoints.
+ * "Meera Devi AVVNL meter tested and net meter installed") AND bulk "Lekha Jokha" lines
+ * (e.g. "Ramesh Sharma site kharcha 1200 chai nashta", "Raju helper advance 2000")
+ * and maps them to exact parties, workflow checkpoints, and site expense records.
  */
 object WhatsAppParser {
 
     private val kwRegex = Regex("""(\d+(?:\.\d+)?)\s*k\s*w""", RegexOption.IGNORE_CASE)
+    private val amountRegex = Regex("""(?:rs\.?|₹)?\s*(\d{2,7}(?:\.\d{1,2})?)""", RegexOption.IGNORE_CASE)
+
+    fun parseBulkLekhaJokha(rawText: String, parties: List<PartyProject>): List<ParsedLekhaJokhaLine> {
+        return rawText.lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .mapNotNull { line ->
+                val lower = line.lowercase()
+                val amountMatch = amountRegex.findAll(line)
+                    .mapNotNull { it.groupValues.getOrNull(1)?.toDoubleOrNull() }
+                    .lastOrNull() ?: return@mapNotNull null
+                if (amountMatch <= 0.0) return@mapNotNull null
+
+                val matchedParty = findBestMatchingParty(lower, parties)
+                val category = when {
+                    lower.contains("advance") || lower.contains("adv") || lower.contains("udhar") ->
+                        KharchaCategory.WORKER_ADVANCE
+                    lower.contains("labour") || lower.contains("mazdoor") || lower.contains("mistry") || lower.contains("fitting") ->
+                        KharchaCategory.LABOUR
+                    else -> KharchaCategory.SITE_KHARCHA
+                }
+
+                val cleanedTitle = line
+                    .replace(amountRegex, " ")
+                    .replace(Regex("""\s+"""), " ")
+                    .trim()
+                    .ifBlank { category.label }
+
+                ParsedLekhaJokhaLine(
+                    rawLine = line,
+                    matchedPartyId = matchedParty?.id,
+                    matchedPartyName = matchedParty?.partyName ?: "General Site",
+                    category = category,
+                    workerOrTitle = cleanedTitle,
+                    amount = amountMatch
+                )
+            }
+    }
 
     fun parse(rawMessage: String, parties: List<PartyProject>): ParsedWhatsAppUpdate {
         val text = rawMessage.trim()
@@ -98,12 +139,10 @@ object WhatsAppParser {
     }
 
     private fun findBestMatchingParty(lowerText: String, parties: List<PartyProject>): PartyProject? {
-        // Direct full name contains
         parties.firstOrNull { p ->
             p.partyName.isNotBlank() && lowerText.contains(p.partyName.lowercase())
         }?.let { return it }
 
-        // Token score match
         var best: PartyProject? = null
         var bestScore = 0
         for (p in parties) {

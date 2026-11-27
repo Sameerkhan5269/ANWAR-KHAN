@@ -23,9 +23,11 @@ object RolePermissions {
 
     fun canViewPartnerSplits(role: StaffRole): Boolean = role == StaffRole.OWNER
 
-    fun canManageUsers(role: StaffRole): Boolean = role == StaffRole.OWNER
+    fun canManageUsers(role: StaffRole): Boolean = role == StaffRole.OWNER || role == StaffRole.ACCOUNTS
 
     fun canDeleteRecords(role: StaffRole): Boolean = role == StaffRole.OWNER
+
+    fun canSwitchDivision(role: StaffRole): Boolean = role == StaffRole.OWNER || role == StaffRole.ACCOUNTS
 
     fun canCreateParty(role: StaffRole): Boolean = when (role) {
         StaffRole.OWNER, StaffRole.ACCOUNTS, StaffRole.OFFICE -> true
@@ -52,6 +54,18 @@ object RolePermissions {
         StaffRole.OWNER, StaffRole.ACCOUNTS, StaffRole.OFFICE -> true
         StaffRole.SUPERVISOR, StaffRole.HELPER -> false
     }
+
+    fun canViewPartyProfitability(role: StaffRole): Boolean = when (role) {
+        StaffRole.OWNER, StaffRole.ACCOUNTS -> true
+        StaffRole.OFFICE, StaffRole.SUPERVISOR, StaffRole.HELPER -> false
+    }
+
+    fun canManageImprest(role: StaffRole): Boolean = when (role) {
+        StaffRole.OWNER, StaffRole.ACCOUNTS -> true
+        StaffRole.OFFICE, StaffRole.SUPERVISOR, StaffRole.HELPER -> false
+    }
+
+    fun canLogSitePurchase(role: StaffRole): Boolean = true
 
     fun canUploadVaultDocs(role: StaffRole): Boolean = true
 }
@@ -83,6 +97,57 @@ fun formatInr(amount: Double, showDecimals: Boolean = false): String {
     }
     val sign = if (isNegative) "-" else ""
     return "${sign}₹$formattedInt$decPart"
+}
+
+/**
+ * Converts a rupee amount into Indian English words (e.g. "Rupees One Lakh Twenty Five Thousand Only").
+ */
+fun amountInWords(amount: Double): String {
+    if (amount.isNaN() || amount.isInfinite() || amount <= 0.0) return "Rupees Zero Only"
+    val whole = kotlin.math.round(amount).toLong()
+    val units = arrayOf(
+        "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+        "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"
+    )
+    val tens = arrayOf("", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety")
+
+    fun twoDigits(n: Int): String = when {
+        n == 0 -> ""
+        n < 20 -> units[n]
+        else -> (tens[n / 10] + " " + units[n % 10]).trim()
+    }
+
+    fun convertLong(n: Long): String {
+        if (n == 0L) return ""
+        val sb = StringBuilder()
+        var rem = n
+        val crore = (rem / 10_000_000L).toInt()
+        if (crore > 0) {
+            sb.append(convertLong(crore.toLong())).append(" Crore ")
+            rem %= 10_000_000L
+        }
+        val lakh = (rem / 100_000L).toInt()
+        if (lakh > 0) {
+            sb.append(twoDigits(lakh)).append(" Lakh ")
+            rem %= 100_000L
+        }
+        val thousand = (rem / 1_000L).toInt()
+        if (thousand > 0) {
+            sb.append(twoDigits(thousand)).append(" Thousand ")
+            rem %= 1_000L
+        }
+        val hundred = (rem / 100L).toInt()
+        if (hundred > 0) {
+            sb.append(units[hundred]).append(" Hundred ")
+            rem %= 100L
+        }
+        if (rem > 0) {
+            sb.append(twoDigits(rem.toInt()))
+        }
+        return sb.toString().trim()
+    }
+
+    return "Rupees ${convertLong(whole)} Only"
 }
 
 /**

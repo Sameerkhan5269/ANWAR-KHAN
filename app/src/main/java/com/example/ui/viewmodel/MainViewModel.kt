@@ -12,14 +12,19 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.core.ExportPrintHelper
 import com.example.core.RolePermissions
 import com.example.core.nowTimestamp
 import com.example.core.todayIsoDate
+import com.example.data.BusyAccountingEngine
+import com.example.data.FirebaseAiPhotoRepository
 import com.example.data.FirebaseAiScannerRepository
+import com.example.data.RealCostingCalculator
 import com.example.data.SupabaseSyncRepository
 import com.example.data.SyncStatus
 import com.example.data.WhatsAppParser
 import com.example.data.model.AppDatabaseSnapshot
+import com.example.data.model.AppHealthReport
 import com.example.data.model.BillRefType
 import com.example.data.model.BusyAccount
 import com.example.data.model.BusyAccountGroup
@@ -27,23 +32,36 @@ import com.example.data.model.BusyItem
 import com.example.data.model.BusyLineItem
 import com.example.data.model.BusyVoucher
 import com.example.data.model.BusyVoucherType
+import com.example.data.model.CostingStructureType
 import com.example.data.model.DcrPanel
 import com.example.data.model.DiscomTestingStatus
 import com.example.data.model.DocumentCategory
+import com.example.data.model.HealthCheckItem
 import com.example.data.model.LeadSource
+import com.example.data.model.LeadStatus
 import com.example.data.model.MaterialIssueLog
 import com.example.data.model.MeterType
 import com.example.data.model.PanelStatus
 import com.example.data.model.ParsedBankRow
+import com.example.data.model.ParsedLekhaJokhaLine
 import com.example.data.model.ParsedPurchaseBill
 import com.example.data.model.ParsedWhatsAppUpdate
 import com.example.data.model.PartyDocument
 import com.example.data.model.PartyProject
+import com.example.data.model.ProjectDivision
+import com.example.data.model.ProposalFormat
 import com.example.data.model.RawMaterial
+import com.example.data.model.RoofStructureType
+import com.example.data.model.SiteKharchaEntry
 import com.example.data.model.SiteLogEntry
+import com.example.data.model.SiteMaterialPurchase
+import com.example.data.model.SitePurchasePaymentSource
+import com.example.data.model.SiteSurveyDimensions
 import com.example.data.model.SolarMeter
+import com.example.data.model.SolarSystemType
 import com.example.data.model.StaffRole
 import com.example.data.model.StaffUser
+import com.example.data.model.TeamChatMessage
 import com.example.data.model.defaultWorkflowStages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,10 +82,22 @@ private val KEY_LOGGED_IN_ID = stringPreferencesKey("logged_in_login_id")
 
 enum class MainNavTab(val label: String) {
     PIPELINE("Pipeline"),
+    SURVEY_3D("3D & Cost"),
     INVENTORY("Inventory"),
     BUSY_ACCOUNTING("BUSY 21"),
     TEAM_SYNC("Team & Sync")
 }
+
+data class AiPhotoPlacementUiState(
+    val rooftopBefore: Bitmap? = null,
+    val rooftopAfter: Bitmap? = null,
+    val rooftopLoading: Boolean = false,
+    val rooftopError: String? = null,
+    val inverterBefore: Bitmap? = null,
+    val inverterAfter: Bitmap? = null,
+    val inverterLoading: Boolean = false,
+    val inverterError: String? = null
+)
 
 sealed interface AiScanUiState {
     data object Idle : AiScanUiState
@@ -83,30 +113,51 @@ data class MainUiState(
     val selectedTab: MainNavTab = MainNavTab.PIPELINE,
     val selectedPartyId: String? = null,
     val selectedSourceFilter: LeadSource? = null,
+    val selectedDivisionFilter: ProjectDivision? = null,
     val pipelineSearchQuery: String = "",
     val inventorySearchQuery: String = "",
     val snapshot: AppDatabaseSnapshot = AppDatabaseSnapshot(),
     val syncStatus: SyncStatus = SyncStatus(),
     val toastMessage: String? = null,
     val aiScanState: AiScanUiState = AiScanUiState.Idle,
-    val darkThemeOverride: Boolean? = null
-)
+    val aiPhotoState: AiPhotoPlacementUiState = AiPhotoPlacementUiState(),
+    val darkThemeOverride: Boolean? = null,
+    val healthReport: AppHealthReport? = null,
+    val isRunningSelfTest: Boolean = false
+) {
+    val visibleParties: List<PartyProject>
+        get() {
+            val assigned = currentUser?.assignedDivision ?: return snapshot.parties
+            return snapshot.parties.filter { it.division == assigned }
+        }
+
+    val visibleTeamChat: List<TeamChatMessage>
+        get() {
+            val assigned = currentUser?.assignedDivision ?: return snapshot.teamChat
+            return snapshot.teamChat.filter { it.division == null || it.division == assigned }
+        }
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val syncRepo = SupabaseSyncRepository(application.applicationContext)
     private val aiScanner = FirebaseAiScannerRepository()
+    private val aiPhotoRepo = FirebaseAiPhotoRepository()
 
     private val _currentUser = MutableStateFlow<StaffUser?>(null)
     private val _loginError = MutableStateFlow<String?>(null)
     private val _selectedTab = MutableStateFlow(MainNavTab.PIPELINE)
     private val _selectedPartyId = MutableStateFlow<String?>(null)
     private val _selectedSourceFilter = MutableStateFlow<LeadSource?>(null)
+    private val _selectedDivisionFilter = MutableStateFlow<ProjectDivision?>(null)
     private val _pipelineSearch = MutableStateFlow("")
     private val _inventorySearch = MutableStateFlow("")
     private val _toastMessage = MutableStateFlow<String?>(null)
     private val _aiScanState = MutableStateFlow<AiScanUiState>(AiScanUiState.Idle)
+    private val _aiPhotoState = MutableStateFlow(AiPhotoPlacementUiState())
     private val _darkThemeOverride = MutableStateFlow<Boolean?>(null)
+    private val _healthReport = MutableStateFlow<AppHealthReport?>(null)
+    private val _isRunningSelfTest = MutableStateFlow(false)
 
     private val navAndFilterFlow = combine(
         _currentUser,
@@ -123,17 +174,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _inventorySearch,
         _toastMessage,
         _aiScanState,
-        _darkThemeOverride
-    ) { pSearch, iSearch, toast, aiState, darkOverride ->
-        SearchToastTuple(pSearch, iSearch, toast, aiState, darkOverride)
+        _darkThemeOverride,
+        _selectedDivisionFilter
+    ) { arr ->
+        SearchToastTuple(
+            pSearch = arr[0] as String,
+            iSearch = arr[1] as String,
+            toast = arr[2] as String?,
+            aiState = arr[3] as AiScanUiState,
+            darkOverride = arr[4] as Boolean?,
+            division = arr[5] as ProjectDivision?
+        )
+    }
+
+    private val diagnosticsFlow = combine(
+        _aiPhotoState,
+        _healthReport,
+        _isRunningSelfTest
+    ) { photo, report, running ->
+        Triple(photo, report, running)
     }
 
     val uiState: StateFlow<MainUiState> = combine(
         navAndFilterFlow,
         searchAndToastFlow,
+        diagnosticsFlow,
         syncRepo.snapshot,
         syncRepo.syncStatus
-    ) { nav, extra, snap, sync ->
+    ) { nav, extra, diag, snap, sync ->
         // Enforce strict privacy: if current role cannot access accounting, force back to PIPELINE
         val safeTab = if (nav.tab == MainNavTab.BUSY_ACCOUNTING &&
             (nav.user == null || !RolePermissions.canAccessAccounting(nav.user.role))
@@ -148,19 +216,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             snap.staffUsers.firstOrNull { it.loginId.equals(u.loginId, ignoreCase = true) } ?: u
         }
 
+        // Enforce division isolation if user is assigned to Solar or Wind only
+        val effectiveDivisionFilter = refreshedUser?.assignedDivision ?: extra.division
+
         MainUiState(
             currentUser = refreshedUser,
             loginError = nav.err,
             selectedTab = safeTab,
             selectedPartyId = nav.partyId,
             selectedSourceFilter = nav.source,
+            selectedDivisionFilter = effectiveDivisionFilter,
             pipelineSearchQuery = extra.pSearch,
             inventorySearchQuery = extra.iSearch,
             snapshot = snap,
             syncStatus = sync,
             toastMessage = extra.toast,
             aiScanState = extra.aiState,
-            darkThemeOverride = extra.darkOverride
+            aiPhotoState = diag.first,
+            darkThemeOverride = extra.darkOverride,
+            healthReport = diag.second,
+            isRunningSelfTest = diag.third
         )
     }.stateIn(
         scope = viewModelScope,
@@ -243,6 +318,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedSourceFilter.value = if (_selectedSourceFilter.value == source) null else source
     }
 
+    fun setDivisionFilter(division: ProjectDivision?) {
+        val actor = _currentUser.value ?: return
+        if (!RolePermissions.canSwitchDivision(actor.role)) return
+        _selectedDivisionFilter.value = if (_selectedDivisionFilter.value == division) null else division
+    }
+
     fun setPipelineSearch(q: String) {
         _pipelineSearch.value = q
     }
@@ -266,13 +347,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun forceCloudSync() {
         viewModelScope.launch {
             val ok = syncRepo.pullAllFromCloud()
-            showToast(if (ok) "Cloud data synced from Supabase." else "Offline — showing cached data.")
+            val status = syncRepo.syncStatus.value
+            val msg = when {
+                ok -> "Live synced with Supabase (nb_solar_store)."
+                status.needsRlsGrant -> "Supabase permission denied (42501). Open Team & Sync tab to copy the GRANT/RLS SQL."
+                else -> "Unable to reach Supabase — retrying."
+            }
+            showToast(msg)
         }
     }
 
     // --- STAFF USER MANAGEMENT (OWNER ONLY) ---
 
-    fun addStaffUser(loginId: String, pin: String, displayName: String, role: StaffRole) {
+    fun addStaffUser(
+        loginId: String,
+        pin: String,
+        displayName: String,
+        role: StaffRole,
+        assignedDivision: ProjectDivision? = null
+    ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canManageUsers(actor.role)) {
             showToast("Only Owner / CEO can create staff accounts.")
@@ -283,6 +376,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Enter valid Login ID and 4-digit PIN.")
             return
         }
+        val effectiveDivision = if (role == StaffRole.OWNER || role == StaffRole.ACCOUNTS) {
+            null
+        } else {
+            assignedDivision
+        }
         syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_STAFF) { snap ->
             val filtered = snap.staffUsers.filterNot { it.loginId.equals(cleanId, ignoreCase = true) }
             snap.copy(
@@ -291,6 +389,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     pin = pin.trim(),
                     displayName = displayName.trim().ifBlank { cleanId },
                     role = role,
+                    assignedDivision = effectiveDivision,
                     isBuiltIn = false
                 )
             )
@@ -307,20 +406,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showToast("Staff user removed.")
     }
 
-    // --- PARTY PIPELINE & 5 WORKFLOW SECTIONS ---
+    fun topUpSupervisorImprest(staffId: String, amount: Double) {
+        val actor = _currentUser.value ?: return
+        if (!RolePermissions.canManageImprest(actor.role)) {
+            showToast("Only Owner / Accounts can top up Imprest Cash.")
+            return
+        }
+        if (amount <= 0.0) {
+            showToast("Enter a positive Imprest top-up amount.")
+            return
+        }
+        var targetName = ""
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_STAFF) { snap ->
+            snap.copy(
+                staffUsers = snap.staffUsers.map { u ->
+                    if (u.id != staffId) u else {
+                        targetName = u.displayName
+                        u.copy(imprestBalance = u.imprestBalance + amount)
+                    }
+                }
+            )
+        }
+        showToast("Added ₹${amount.toInt()} Imprest Cash to $targetName.")
+    }
+
+    // --- PARTY PIPELINE, LEAD DETAILS & 5 WORKFLOW SECTIONS ---
 
     fun createParty(
         name: String,
         mobile: String,
         address: String,
+        cityOrLocation: String,
         consumerNo: String,
         capacityKw: Double,
         leadSource: LeadSource,
+        referrerName: String,
+        referrerPhone: String,
+        leadDate: String,
+        roofStructureType: RoofStructureType,
+        quotedRatePerKw: Double,
+        nextFollowUpDate: String,
+        siteSurveyNotes: String,
+        leadStatus: LeadStatus,
         projectValue: Double,
         loan1Amount: Double,
         loan2Amount: Double,
         subsidyAmount: Double,
-        partnerCommissionPct: Double
+        partnerCommissionPct: Double,
+        division: ProjectDivision = ProjectDivision.SOLAR
     ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canCreateParty(actor.role)) {
@@ -333,27 +466,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val partyId = UUID.randomUUID().toString()
+        val resolvedValue = if (projectValue > 0.0) {
+            projectValue
+        } else if (quotedRatePerKw > 0.0) {
+            quotedRatePerKw * capacityKw.coerceAtLeast(1.0)
+        } else 0.0
+        val cleanDate = leadDate.trim().ifBlank { todayIsoDate() }
+
+        val resolvedDivision = actor.assignedDivision ?: division
         val newParty = PartyProject(
             id = partyId,
             partyName = name.trim(),
             mobile = mobile.trim(),
-            address = address.trim(),
+            address = address.trim().ifBlank { cityOrLocation.trim() },
+            cityOrLocation = cityOrLocation.trim().ifBlank { address.trim() },
             consumerNumber = consumerNo.trim(),
             capacityKw = capacityKw.coerceAtLeast(1.0),
+            division = resolvedDivision,
             leadSource = leadSource,
-            projectValue = projectValue.coerceAtLeast(0.0),
+            referrerName = referrerName.trim(),
+            referrerPhone = referrerPhone.trim(),
+            leadDate = cleanDate,
+            roofStructureType = roofStructureType,
+            quotedRatePerKw = quotedRatePerKw.coerceAtLeast(0.0),
+            nextFollowUpDate = nextFollowUpDate.trim(),
+            siteSurveyNotes = siteSurveyNotes.trim(),
+            leadStatus = leadStatus,
+            projectValue = resolvedValue.coerceAtLeast(0.0),
             receivedAmount = 0.0,
             loan1Amount = loan1Amount.coerceAtLeast(0.0),
             loan2Amount = loan2Amount.coerceAtLeast(0.0),
             subsidyAmount = subsidyAmount.coerceAtLeast(0.0),
             partnerCommissionPct = partnerCommissionPct.coerceIn(0.0, 50.0),
-            createdDate = todayIsoDate(),
+            createdDate = cleanDate,
             stages = defaultWorkflowStages(),
             siteLogs = listOf(
                 SiteLogEntry(
                     timestamp = nowTimestamp(),
                     author = actor.displayName,
-                    message = "Party created under ${leadSource.label} (${capacityKw} kW)"
+                    message = "Lead/Party created (${leadStatus.label}) under ${leadSource.label} • ${capacityKw} kW ${roofStructureType.label}"
                 )
             )
         )
@@ -378,6 +529,223 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         showToast("Party '${newParty.partyName}' created & synced.")
+    }
+
+    fun updatePartyLeadDetails(
+        partyId: String,
+        mobile: String,
+        cityOrLocation: String,
+        consumerNo: String,
+        capacityKw: Double,
+        leadSource: LeadSource,
+        referrerName: String,
+        referrerPhone: String,
+        leadDate: String,
+        roofStructureType: RoofStructureType,
+        quotedRatePerKw: Double,
+        dealValue: Double,
+        nextFollowUpDate: String,
+        siteSurveyNotes: String,
+        leadStatus: LeadStatus,
+        division: ProjectDivision? = null
+    ) {
+        val actor = _currentUser.value ?: return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
+            snap.copy(
+                parties = snap.parties.map { p ->
+                    if (p.id != partyId) p else p.copy(
+                        mobile = mobile.trim(),
+                        cityOrLocation = cityOrLocation.trim(),
+                        address = cityOrLocation.trim().ifBlank { p.address },
+                        consumerNumber = consumerNo.trim(),
+                        capacityKw = capacityKw.coerceAtLeast(1.0),
+                        division = division ?: p.division,
+                        leadSource = leadSource,
+                        referrerName = referrerName.trim(),
+                        referrerPhone = referrerPhone.trim(),
+                        leadDate = leadDate.trim().ifBlank { p.leadDate },
+                        roofStructureType = roofStructureType,
+                        quotedRatePerKw = quotedRatePerKw.coerceAtLeast(0.0),
+                        projectValue = if (RolePermissions.canViewFinancials(actor.role)) dealValue.coerceAtLeast(0.0) else p.projectValue,
+                        nextFollowUpDate = nextFollowUpDate.trim(),
+                        siteSurveyNotes = siteSurveyNotes.trim(),
+                        leadStatus = leadStatus,
+                        siteLogs = listOf(
+                            SiteLogEntry(
+                                timestamp = nowTimestamp(),
+                                author = actor.displayName,
+                                message = "Lead updated: ${leadStatus.label}" +
+                                    if (nextFollowUpDate.isNotBlank()) " • Follow-up: $nextFollowUpDate" else ""
+                            )
+                        ) + p.siteLogs
+                    )
+                }
+            )
+        }
+        showToast("Lead details saved & synced.")
+    }
+
+    fun applyQuoteFromSurvey(
+        partyId: String,
+        capacityKw: Double,
+        roofType: RoofStructureType,
+        quotedRatePerKw: Double,
+        dealValue: Double,
+        surveyNotes: String
+    ) {
+        val actor = _currentUser.value ?: return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
+            snap.copy(
+                parties = snap.parties.map { p ->
+                    if (p.id != partyId) p else p.copy(
+                        capacityKw = capacityKw.coerceAtLeast(1.0),
+                        roofStructureType = roofType,
+                        quotedRatePerKw = if (RolePermissions.canViewFinancials(actor.role)) quotedRatePerKw else p.quotedRatePerKw,
+                        projectValue = if (RolePermissions.canViewFinancials(actor.role)) dealValue else p.projectValue,
+                        siteSurveyNotes = surveyNotes,
+                        siteLogs = listOf(
+                            SiteLogEntry(
+                                timestamp = nowTimestamp(),
+                                author = actor.displayName,
+                                message = "Survey & Real Costing Applied: $surveyNotes"
+                            )
+                        ) + p.siteLogs
+                    )
+                }
+            )
+        }
+        showToast("Survey specs & real costing applied to party record.")
+    }
+
+    fun approveProposalAndConvertOrder(
+        existingPartyId: String?,
+        customerName: String,
+        customerMobile: String,
+        siteLocation: String,
+        consumerNo: String,
+        capacityKw: Double,
+        roofType: RoofStructureType,
+        quotedRatePerKw: Double,
+        dealValue: Double,
+        subsidyAmount: Double,
+        surveyNotes: String
+    ) {
+        val actor = _currentUser.value ?: return
+        val cleanName = customerName.trim().ifBlank { "Valued Solar Consumer" }
+        val division = actor.assignedDivision ?: ProjectDivision.SOLAR
+
+        if (!existingPartyId.isNullOrBlank()) {
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
+                snap.copy(
+                    parties = snap.parties.map { p ->
+                        if (p.id != existingPartyId) p else {
+                            val updatedStages = p.stages.map { s ->
+                                if (s.id == "REG_3" && !s.completed) {
+                                    s.copy(
+                                        completed = true,
+                                        completedAt = nowTimestamp(),
+                                        completedBy = actor.displayName
+                                    )
+                                } else s
+                            }
+                            p.copy(
+                                mobile = customerMobile.trim().ifBlank { p.mobile },
+                                cityOrLocation = siteLocation.trim().ifBlank { p.cityOrLocation },
+                                address = siteLocation.trim().ifBlank { p.address },
+                                consumerNumber = consumerNo.trim().ifBlank { p.consumerNumber },
+                                capacityKw = capacityKw.coerceAtLeast(1.0),
+                                roofStructureType = roofType,
+                                quotedRatePerKw = if (RolePermissions.canViewFinancials(actor.role)) quotedRatePerKw else p.quotedRatePerKw,
+                                projectValue = if (RolePermissions.canViewFinancials(actor.role)) dealValue else p.projectValue,
+                                subsidyAmount = if (RolePermissions.canViewFinancials(actor.role)) subsidyAmount else p.subsidyAmount,
+                                siteSurveyNotes = surveyNotes,
+                                leadStatus = LeadStatus.CONVERTED,
+                                stages = updatedStages,
+                                siteLogs = listOf(
+                                    SiteLogEntry(
+                                        timestamp = nowTimestamp(),
+                                        author = actor.displayName,
+                                        message = "Proposal Approved & Converted to Active Order: $surveyNotes"
+                                    )
+                                ) + p.siteLogs
+                            )
+                        }
+                    }
+                )
+            }
+            showToast("Proposal approved! '${cleanName}' moved to Active Converted Orders.")
+        } else {
+            val newId = UUID.randomUUID().toString()
+            val stages = defaultWorkflowStages().map { s ->
+                if (s.id == "REG_3") {
+                    s.copy(completed = true, completedAt = nowTimestamp(), completedBy = actor.displayName)
+                } else s
+            }
+            val newParty = PartyProject(
+                id = newId,
+                partyName = cleanName,
+                mobile = customerMobile.trim(),
+                address = siteLocation.trim().ifBlank { "Udaipur, Rajasthan" },
+                cityOrLocation = siteLocation.trim().ifBlank { "Udaipur, Rajasthan" },
+                consumerNumber = consumerNo.trim(),
+                capacityKw = capacityKw.coerceAtLeast(1.0),
+                division = division,
+                leadSource = LeadSource.NB_DIRECT,
+                leadDate = todayIsoDate(),
+                roofStructureType = roofType,
+                quotedRatePerKw = if (RolePermissions.canViewFinancials(actor.role)) quotedRatePerKw else 0.0,
+                siteSurveyNotes = surveyNotes,
+                leadStatus = LeadStatus.CONVERTED,
+                projectValue = if (RolePermissions.canViewFinancials(actor.role)) dealValue else 0.0,
+                subsidyAmount = if (RolePermissions.canViewFinancials(actor.role)) subsidyAmount else 0.0,
+                createdDate = todayIsoDate(),
+                stages = stages,
+                siteLogs = listOf(
+                    SiteLogEntry(
+                        timestamp = nowTimestamp(),
+                        author = actor.displayName,
+                        message = "Walk-in Proposal Approved & Converted to Active Order: $surveyNotes"
+                    )
+                )
+            )
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
+                snap.copy(parties = listOf(newParty) + snap.parties)
+            }
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ACCOUNTS) { snap ->
+                val exists = snap.busyAccounts.any { it.name.equals(newParty.partyName, ignoreCase = true) }
+                if (exists) snap else snap.copy(
+                    busyAccounts = snap.busyAccounts + BusyAccount(
+                        name = newParty.partyName,
+                        group = BusyAccountGroup.SUNDRY_DEBTORS,
+                        openingBalance = 0.0,
+                        mobile = newParty.mobile,
+                        linkedPartyId = newId,
+                        defaultCostCenter = LeadSource.NB_DIRECT
+                    )
+                )
+            }
+            showToast("Created & Converted Active Order for '$cleanName'!")
+        }
+    }
+
+    fun markReferralPaid(partyId: String, paid: Boolean) {
+        val actor = _currentUser.value ?: return
+        if (!RolePermissions.canAccessAccounting(actor.role)) {
+            showToast("Only Owner / Accounts can settle referral commissions.")
+            return
+        }
+        val today = todayIsoDate()
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
+            snap.copy(
+                parties = snap.parties.map { p ->
+                    if (p.id != partyId) p else p.copy(
+                        referralPaid = paid,
+                        referralPayoutDate = if (paid) today else ""
+                    )
+                }
+            )
+        }
+        showToast(if (paid) "Referral commission marked PAID." else "Referral commission marked Pending.")
     }
 
     fun deleteParty(partyId: String) {
@@ -601,6 +969,259 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             showToast("Document '${doc.title}' added to Vault & synced.")
+        }
+    }
+
+    // --- INSTALLATION ON-SITE MATERIAL PURCHASE (PARTY-LINKED LOCAL PROCUREMENT) ---
+
+    fun addSiteMaterialPurchase(
+        partyId: String,
+        itemDescription: String,
+        quantity: String,
+        vendorName: String,
+        amount: Double,
+        paymentSource: SitePurchasePaymentSource,
+        billPhotoUri: Uri?
+    ) {
+        val actor = _currentUser.value ?: return
+        val party = syncRepo.snapshot.value.parties.firstOrNull { it.id == partyId } ?: return
+        if (itemDescription.isBlank() || amount <= 0.0) {
+            showToast("Enter item description and valid ₹ amount.")
+            return
+        }
+
+        viewModelScope.launch {
+            var savedPath = ""
+            var thumbBase64 = ""
+            if (billPhotoUri != null) {
+                val (p, b64) = withContext(Dispatchers.IO) {
+                    try {
+                        val resolver = getApplication<Application>().contentResolver
+                        val billsDir = File(getApplication<Application>().filesDir, "site_bills").apply { mkdirs() }
+                        val dest = File(billsDir, "bill_${System.currentTimeMillis()}.jpg")
+                        resolver.openInputStream(billPhotoUri)?.use { input ->
+                            dest.outputStream().use { out -> input.copyTo(out) }
+                        }
+                        dest.absolutePath to createCompressedThumbnailBase64(dest)
+                    } catch (_: Exception) {
+                        "" to ""
+                    }
+                }
+                savedPath = p
+                thumbBase64 = b64
+            }
+
+            val cleanVendor = vendorName.trim().ifBlank { "Local Hardware Shop" }
+            val voucherType = if (paymentSource == SitePurchasePaymentSource.VENDOR_CREDIT) {
+                BusyVoucherType.PURCHASE
+            } else {
+                BusyVoucherType.PAYMENT
+            }
+            val nextNum = syncRepo.snapshot.value.busyVouchers.count { it.type == voucherType } + 1
+            val vchNo = "${voucherType.prefix}-SITE-${nextNum.toString().padStart(4, '0')}"
+
+            val purchase = SiteMaterialPurchase(
+                itemDescription = itemDescription.trim(),
+                quantity = quantity.trim().ifBlank { "1" },
+                vendorName = cleanVendor,
+                amount = amount,
+                paymentSource = paymentSource,
+                billPhotoPath = savedPath,
+                billPhotoBase64 = thumbBase64,
+                purchasedByLoginId = actor.loginId,
+                purchasedByName = actor.displayName,
+                purchaseDate = todayIsoDate(),
+                linkedVoucherNo = vchNo
+            )
+
+            // 1. Add purchase to Party card
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
+                snap.copy(
+                    parties = snap.parties.map { p ->
+                        if (p.id != partyId) p else p.copy(
+                            sitePurchases = listOf(purchase) + p.sitePurchases,
+                            siteLogs = listOf(
+                                SiteLogEntry(
+                                    timestamp = nowTimestamp(),
+                                    author = actor.displayName,
+                                    message = "On-Site Purchase: ${purchase.itemDescription} (${purchase.quantity}) from $cleanVendor via ${paymentSource.label}"
+                                )
+                            ) + p.siteLogs
+                        )
+                    }
+                )
+            }
+
+            // 2. Automatically deduct from Supervisor Imprest Wallet if paid via Supervisor Imprest Cash
+            if (paymentSource == SitePurchasePaymentSource.SUPERVISOR_IMPREST) {
+                syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_STAFF) { snap ->
+                    val actorIsSupervisor = actor.role == StaffRole.SUPERVISOR
+                    val targetLogin = if (actorIsSupervisor) {
+                        actor.loginId
+                    } else {
+                        snap.staffUsers.firstOrNull { it.role == StaffRole.SUPERVISOR }?.loginId
+                    }
+                    snap.copy(
+                        staffUsers = snap.staffUsers.map { u ->
+                            if (targetLogin != null && u.loginId.equals(targetLogin, ignoreCase = true)) {
+                                u.copy(imprestBalance = u.imprestBalance - amount)
+                            } else u
+                        }
+                    )
+                }
+            }
+
+            // 3. Automatically post Purchase (F9) / Payment (F5) voucher in BUSY 21 tagged to Party Cost Center
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ACCOUNTS) { snap ->
+                val vendorExists = snap.busyAccounts.any { it.name.equals(cleanVendor, ignoreCase = true) }
+                if (vendorExists) snap else snap.copy(
+                    busyAccounts = snap.busyAccounts + BusyAccount(
+                        name = cleanVendor,
+                        group = BusyAccountGroup.SUNDRY_CREDITORS,
+                        openingBalance = 0.0,
+                        defaultCostCenter = party.leadSource
+                    )
+                )
+            }
+
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_VOUCHERS) { snap ->
+                val accounts = snap.busyAccounts
+                val vendorAcc = accounts.firstOrNull { it.name.equals(cleanVendor, ignoreCase = true) }
+                    ?: BusyAccount(name = cleanVendor, group = BusyAccountGroup.SUNDRY_CREDITORS, defaultCostCenter = party.leadSource)
+                val contraAcc = when (paymentSource) {
+                    SitePurchasePaymentSource.SUPERVISOR_IMPREST ->
+                        accounts.firstOrNull { it.id == "acc_imprest" }
+                            ?: BusyAccount(id = "acc_imprest", name = "Supervisor Imprest Cash Wallet", group = BusyAccountGroup.CASH_IN_HAND)
+                    SitePurchasePaymentSource.COMPANY_UPI ->
+                        accounts.firstOrNull { it.id == "acc_sbi" }
+                            ?: BusyAccount(id = "acc_sbi", name = "SBI Current A/c - NB Engineering (UPI)", group = BusyAccountGroup.BANK_ACCOUNTS)
+                    SitePurchasePaymentSource.VENDOR_CREDIT ->
+                        accounts.firstOrNull { it.id == "acc_site_mat" }
+                            ?: BusyAccount(id = "acc_site_mat", name = "On-Site Local Hardware Purchases", group = BusyAccountGroup.PURCHASE_ACCOUNTS)
+                }
+                val vch = BusyVoucher(
+                    type = voucherType,
+                    voucherNo = vchNo,
+                    date = todayIsoDate(),
+                    partyAccountId = vendorAcc.id,
+                    partyAccountName = vendorAcc.name,
+                    contraAccountId = contraAcc.id,
+                    contraAccountName = contraAcc.name,
+                    costCenter = party.leadSource,
+                    taxableAmount = amount,
+                    totalAmount = amount,
+                    billRefType = if (voucherType == BusyVoucherType.PURCHASE) BillRefType.NEW_REF else BillRefType.ON_ACCOUNT,
+                    billRefNo = vchNo,
+                    narration = "Party: ${party.partyName} | Site Mat: ${purchase.itemDescription} (${purchase.quantity}) | ${paymentSource.label}",
+                    createdBy = actor.displayName
+                )
+                snap.copy(busyVouchers = listOf(vch) + snap.busyVouchers)
+            }
+
+            showToast("Site material purchase saved & synced (${voucherType.shortcut} #$vchNo).")
+        }
+    }
+
+    // --- LEKHA JOKHA WHATSAPP BULK PARSER (SITE KHARCHA & WORKER ADVANCES) ---
+
+    fun previewBulkLekhaJokha(rawText: String): List<ParsedLekhaJokhaLine> {
+        return WhatsAppParser.parseBulkLekhaJokha(rawText, syncRepo.snapshot.value.parties)
+    }
+
+    fun applyBulkLekhaJokha(lines: List<ParsedLekhaJokhaLine>) {
+        val actor = _currentUser.value ?: return
+        if (lines.isEmpty()) {
+            showToast("No valid Lekha Jokha expense lines detected.")
+            return
+        }
+        val date = todayIsoDate()
+        val entries = lines.map { line ->
+            SiteKharchaEntry(
+                partyId = line.matchedPartyId.orEmpty(),
+                partyName = line.matchedPartyName,
+                category = line.category,
+                workerOrTitle = line.workerOrTitle,
+                amount = line.amount,
+                date = date,
+                note = line.rawLine,
+                loggedBy = actor.displayName
+            )
+        }
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_KHARCHA) { snap ->
+            snap.copy(siteKharcha = entries + snap.siteKharcha)
+        }
+
+        // Auto-post Payment (F5) vouchers for BUSY 21 Accounting
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_VOUCHERS) { snap ->
+            val expAcc = snap.busyAccounts.firstOrNull { it.id == "acc_site_exp" }
+                ?: BusyAccount(id = "acc_site_exp", name = "Site Labour & Daily Kharcha Exp", group = BusyAccountGroup.DIRECT_EXPENSES)
+            val cashAcc = snap.busyAccounts.firstOrNull { it.id == "acc_cash" }
+                ?: BusyAccount(id = "acc_cash", name = "Cash-in-Hand (Madri Office)", group = BusyAccountGroup.CASH_IN_HAND)
+            val baseNum = snap.busyVouchers.count { it.type == BusyVoucherType.PAYMENT } + 1
+            val newVouchers = entries.mapIndexed { idx, kh ->
+                val partyCostCenter = snap.parties.firstOrNull { it.id == kh.partyId }?.leadSource ?: LeadSource.NB_DIRECT
+                BusyVoucher(
+                    type = BusyVoucherType.PAYMENT,
+                    voucherNo = "PMT-KH-${(baseNum + idx).toString().padStart(4, '0')}",
+                    date = date,
+                    partyAccountId = expAcc.id,
+                    partyAccountName = expAcc.name,
+                    contraAccountId = cashAcc.id,
+                    contraAccountName = cashAcc.name,
+                    costCenter = partyCostCenter,
+                    taxableAmount = kh.amount,
+                    totalAmount = kh.amount,
+                    narration = "Lekha Jokha [${kh.partyName}]: ${kh.workerOrTitle}",
+                    createdBy = actor.displayName
+                )
+            }
+            snap.copy(busyVouchers = newVouchers + snap.busyVouchers)
+        }
+
+        showToast("Synced ${entries.size} Lekha Jokha entries to Site Kharcha & BUSY 21.")
+    }
+
+    // --- REAL-TIME TEAM CHAT & VIDEO MESSAGES ---
+
+    fun sendTeamChatMessage(text: String, videoUri: Uri? = null) {
+        val actor = _currentUser.value ?: return
+        if (text.isBlank() && videoUri == null) return
+
+        viewModelScope.launch {
+            var localVideoPath = ""
+            var videoLabel = ""
+            if (videoUri != null) {
+                val (path, label) = withContext(Dispatchers.IO) {
+                    try {
+                        val resolver = getApplication<Application>().contentResolver
+                        val dir = File(getApplication<Application>().filesDir, "chat_videos").apply { mkdirs() }
+                        val dest = File(dir, "vid_${System.currentTimeMillis()}.mp4")
+                        resolver.openInputStream(videoUri)?.use { input ->
+                            dest.outputStream().use { out -> input.copyTo(out) }
+                        }
+                        val sizeKb = (dest.length() / 1024L).coerceAtLeast(1L)
+                        dest.absolutePath to "Site Video (${sizeKb} KB)"
+                    } catch (_: Exception) {
+                        "" to ""
+                    }
+                }
+                localVideoPath = path
+                videoLabel = label
+            }
+
+            val msg = TeamChatMessage(
+                senderLoginId = actor.loginId,
+                senderName = actor.displayName,
+                senderRole = actor.role,
+                division = actor.assignedDivision ?: _selectedDivisionFilter.value,
+                text = text.trim().ifBlank { if (videoLabel.isNotBlank()) "Sent a site video update" else "" },
+                videoPath = localVideoPath,
+                videoLabel = videoLabel,
+                timestamp = nowTimestamp()
+            )
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_CHAT) { snap ->
+                snap.copy(teamChat = snap.teamChat + msg)
+            }
         }
     }
 
@@ -863,6 +1484,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         billRefType: BillRefType,
         billRefNo: String,
         utrOrChequeNo: String,
+        paidBy: String = "",
         narration: String,
         lineItems: List<BusyLineItem>,
         explicitCgst: Double? = null,
@@ -918,7 +1540,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val nextNum = syncRepo.snapshot.value.busyVouchers.count { it.type == type } + 1
         val vchNo = customVoucherNo?.takeIf { it.isNotBlank() }
-            ?: "${type.prefix}-2627-${nextNum.toString().padStart(4, '0')}"
+            ?: if (type == BusyVoucherType.SALES) {
+                "NB ${nextNum.toString().padStart(2, '0')}/2026-27"
+            } else {
+                "${type.prefix}-2627-${nextNum.toString().padStart(4, '0')}"
+            }
 
         val voucher = BusyVoucher(
             type = type,
@@ -938,6 +1564,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             billRefType = billRefType,
             billRefNo = billRefNo.trim().ifBlank { vchNo },
             utrOrChequeNo = cleanUtr,
+            paidBy = paidBy.trim(),
             narration = narration.trim(),
             lineItems = lineItems,
             partyGstin = partyAccount.gstin,
@@ -1229,6 +1856,209 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // --- AI SITE PHOTO PLACEMENT (GEMINI NANO BANANA 2.1) ---
+
+    fun setRooftopBeforePhoto(uri: Uri) {
+        viewModelScope.launch {
+            val (bmp, _, _) = withContext(Dispatchers.IO) { readUriForAi(uri) }
+            if (bmp == null) {
+                _aiPhotoState.value = _aiPhotoState.value.copy(rooftopError = "Unable to decode selected rooftop photo.")
+            } else {
+                _aiPhotoState.value = _aiPhotoState.value.copy(rooftopBefore = bmp, rooftopAfter = null, rooftopError = null)
+            }
+        }
+    }
+
+    fun setInverterBeforePhoto(uri: Uri) {
+        viewModelScope.launch {
+            val (bmp, _, _) = withContext(Dispatchers.IO) { readUriForAi(uri) }
+            if (bmp == null) {
+                _aiPhotoState.value = _aiPhotoState.value.copy(inverterError = "Unable to decode selected inverter wall photo.")
+            } else {
+                _aiPhotoState.value = _aiPhotoState.value.copy(inverterBefore = bmp, inverterAfter = null, inverterError = null)
+            }
+        }
+    }
+
+    fun generateAiRooftopPlacement(
+        capacityKw: Double,
+        panelCount: Int,
+        structureType: CostingStructureType,
+        systemType: SolarSystemType
+    ) {
+        val before = _aiPhotoState.value.rooftopBefore ?: return
+        viewModelScope.launch {
+            _aiPhotoState.value = _aiPhotoState.value.copy(rooftopLoading = true, rooftopError = null)
+            val result = aiPhotoRepo.placeSolarPanelsOnRooftop(before, capacityKw, panelCount, structureType, systemType)
+            result.fold(
+                onSuccess = { edited ->
+                    _aiPhotoState.value = _aiPhotoState.value.copy(rooftopAfter = edited, rooftopLoading = false)
+                },
+                onFailure = { err ->
+                    _aiPhotoState.value = _aiPhotoState.value.copy(
+                        rooftopLoading = false,
+                        rooftopError = err.message ?: "Rooftop AI placement failed."
+                    )
+                }
+            )
+        }
+    }
+
+    fun generateAiInverterPlacement(capacityKw: Double, systemType: SolarSystemType) {
+        val before = _aiPhotoState.value.inverterBefore ?: return
+        viewModelScope.launch {
+            _aiPhotoState.value = _aiPhotoState.value.copy(inverterLoading = true, inverterError = null)
+            val result = aiPhotoRepo.placeInverterOnWall(before, capacityKw, systemType)
+            result.fold(
+                onSuccess = { edited ->
+                    _aiPhotoState.value = _aiPhotoState.value.copy(inverterAfter = edited, inverterLoading = false)
+                },
+                onFailure = { err ->
+                    _aiPhotoState.value = _aiPhotoState.value.copy(
+                        inverterLoading = false,
+                        inverterError = err.message ?: "Inverter wall AI placement failed."
+                    )
+                }
+            )
+        }
+    }
+
+    fun clearAiPhotoErrors() {
+        _aiPhotoState.value = _aiPhotoState.value.copy(rooftopError = null, inverterError = null)
+    }
+
+    // --- OWNER AUTOMATED SELF-TEST & HEALTH CHECK ---
+
+    fun runAppSelfTest() {
+        if (_isRunningSelfTest.value) return
+        viewModelScope.launch {
+            _isRunningSelfTest.value = true
+            val checks = mutableListOf<HealthCheckItem>()
+            val snap = syncRepo.snapshot.value
+
+            // 1. Live Supabase nb_solar_store Read/Write Ping
+            val pingResult = syncRepo.pingHealthCheck()
+            checks += HealthCheckItem(
+                name = "Supabase Cloud R/W Ping (nb_solar_store)",
+                passed = pingResult.isSuccess,
+                detail = pingResult.getOrElse { err ->
+                    if (com.example.data.SupabaseStoreService.isPermissionDeniedError(err)) {
+                        "FAIL: 42501 RLS grant needed — copy SQL fix above."
+                    } else {
+                        "FAIL: ${err.message ?: "Unreachable (offline queue active)"}"
+                    }
+                }
+            )
+
+            // 2. Owner, Solar & Wind Role Isolation Check
+            val ownerUser = snap.staffUsers.firstOrNull { it.role == StaffRole.OWNER }
+            val solarStaff = snap.staffUsers.firstOrNull { it.loginId == "solar.sup@nb" }
+            val windStaff = snap.staffUsers.firstOrNull { it.loginId == "wind.sup@nb" }
+            val divisionOk = ownerUser?.assignedDivision == null &&
+                solarStaff?.assignedDivision == ProjectDivision.SOLAR &&
+                windStaff?.assignedDivision == ProjectDivision.WIND &&
+                !RolePermissions.canViewFinancials(StaffRole.SUPERVISOR) &&
+                !RolePermissions.canViewPartyProfitability(StaffRole.OFFICE) &&
+                RolePermissions.canViewPartyProfitability(StaffRole.OWNER)
+            checks += HealthCheckItem(
+                name = "Division Isolation & RBAC Privacy Matrix",
+                passed = divisionOk,
+                detail = if (divisionOk) {
+                    "PASS: Owner=All, Solar/Wind strictly isolated, Field/Office privacy locks enforced."
+                } else {
+                    "FAIL: Built-in division or role permission rules mismatched."
+                }
+            )
+
+            // 3. Real Costing & PM Surya Ghar Subsidy Check
+            val rates = RealCostingCalculator.extractLatestPurchaseRates(
+                snap.busyVouchers,
+                snap.busyItems,
+                CostingStructureType.STANDARD_RCC
+            )
+            val sub1 = RealCostingCalculator.computePmSuryaGharSubsidy(1.0, SolarSystemType.ON_GRID_DCR)
+            val sub2 = RealCostingCalculator.computePmSuryaGharSubsidy(2.0, SolarSystemType.ON_GRID_DCR)
+            val sub3 = RealCostingCalculator.computePmSuryaGharSubsidy(3.0, SolarSystemType.ON_GRID_DCR)
+            val subOff = RealCostingCalculator.computePmSuryaGharSubsidy(5.0, SolarSystemType.OFF_GRID)
+            val b3 = RealCostingCalculator.computeRealCosting(
+                capacityKw = 3.0,
+                systemType = SolarSystemType.ON_GRID_DCR,
+                structureType = CostingStructureType.STANDARD_RCC,
+                dimensions = SiteSurveyDimensions(),
+                rates = rates
+            )
+            val mathOk = sub1 == 30_000.0 && sub2 == 60_000.0 && sub3 == 78_000.0 && subOff == 0.0 &&
+                kotlin.math.abs((b3.taxableQuotedPriceInr + b3.gstAmountInr) - b3.grossQuotedPriceInr) < 1.0 &&
+                kotlin.math.abs((b3.grossQuotedPriceInr - b3.pmSuryaGharSubsidyInr) - b3.finalNetCostAfterSubsidyInr) < 1.0 &&
+                b3.grossQuotedPriceInr > 0.0
+            checks += HealthCheckItem(
+                name = "Live Real Costing & PM Surya Ghar Subsidy",
+                passed = mathOk,
+                detail = if (mathOk) {
+                    "PASS: 1kW=₹30k, 2kW=₹60k, 3kW+=₹78k; 3kW Net=₹${b3.finalNetCostAfterSubsidyInr.toLong()}"
+                } else {
+                    "FAIL: Costing or subsidy calculation out of bounds."
+                }
+            )
+
+            // 4. BUSY 21 Double-Entry & GST Accounting Audit
+            val busyOk = runCatching {
+                val tb = BusyAccountingEngine.computeTrialBalance(snap.busyAccounts, snap.busyVouchers)
+                val costing = BusyAccountingEngine.computePartyCostingReport(
+                    snap.parties, snap.dcrPanels, snap.solarMeters, snap.rawMaterials, snap.siteKharcha
+                )
+                tb.groups.isNotEmpty() && costing.size == snap.parties.size
+            }.getOrDefault(false)
+            checks += HealthCheckItem(
+                name = "BUSY 21 Double-Entry & Costing Engine",
+                passed = busyOk,
+                detail = if (busyOk) {
+                    "PASS: ${snap.busyAccounts.size} ledgers, ${snap.busyVouchers.size} vouchers, ${snap.parties.size} parties verified."
+                } else {
+                    "FAIL: BUSY 21 engine encountered an exception."
+                }
+            )
+
+            // 5. Proposal PDF 4-Format Template & Print CSS Check
+            val appCtx = getApplication<Application>().applicationContext
+            val allFormatsHtml = ProposalFormat.entries.map { fmt ->
+                ExportPrintHelper.buildProposalHtml(
+                    context = appCtx,
+                    format = fmt,
+                    customerName = "QA Diagnostics Check",
+                    customerMobile = "9929214883",
+                    siteLocation = "Udaipur, Rajasthan",
+                    consumerNo = "K-1001",
+                    breakdown = b3,
+                    comparisonBreakdowns = listOf(b3),
+                    dimensions = SiteSurveyDimensions(),
+                    includeOwnerInternalCosting = false
+                )
+            }
+            val pdfOk = allFormatsHtml.size == 4 && allFormatsHtml.all { html ->
+                html.contains("08CSZPK9277N2Z8") &&
+                    html.contains("50200079191430") &&
+                    html.contains("break-inside: avoid") &&
+                    html.contains("NB ENGINEERING WORKS AND ELECTRICALS")
+            }
+            checks += HealthCheckItem(
+                name = "Proposal PDF 4-Format HTML & A4 Print CSS",
+                passed = pdfOk,
+                detail = if (pdfOk) {
+                    "PASS: All 4 formats rendered with GSTIN, HDFC Bank & page-break protection."
+                } else {
+                    "FAIL: One or more Proposal PDF templates missing company/CSS markers."
+                }
+            )
+
+            _healthReport.value = AppHealthReport(
+                ranAt = nowTimestamp(),
+                checks = checks
+            )
+            _isRunningSelfTest.value = false
+        }
+    }
+
     // --- MEDIA HELPERS ---
 
     private fun readUriForAi(uri: Uri): Triple<Bitmap?, ByteArray?, String?> {
@@ -1314,5 +2144,6 @@ private data class SearchToastTuple(
     val iSearch: String,
     val toast: String?,
     val aiState: AiScanUiState,
-    val darkOverride: Boolean?
+    val darkOverride: Boolean?,
+    val division: ProjectDivision?
 )

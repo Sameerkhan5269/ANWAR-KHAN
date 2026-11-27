@@ -1,6 +1,5 @@
 package com.example.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -23,43 +22,49 @@ data class SolarExtendedColors(
     val emeraldContainer: Color,
     val navyHeader: Color,
     val gridHeader: Color,
-    val hairlineBorder: Color
+    val hairlineBorder: Color,
+    val gridBorderStrong: Color = GridBorderStrong,
+    val maroonPrimary: Color = MaroonPrimary,
+    val limeGreen: Color = LimeGreen
 )
 
 val LocalSolarColors = staticCompositionLocalOf {
     SolarExtendedColors(
         debitBlue = BusyDebitBlue,
         creditRed = BusyCreditRed,
-        solarAmber = SolarAmber,
-        solarAmberContainer = SolarAmberSoft,
-        emerald = EmeraldSuccess,
-        emeraldContainer = EmeraldSoft,
-        navyHeader = DeepNavy,
+        solarAmber = MaroonPrimary,
+        solarAmberContainer = MaroonContainerLight,
+        emerald = LimeGreen,
+        emeraldContainer = LimeSoft,
+        navyHeader = MaroonPrimary,
         gridHeader = BusyGridHeaderLight,
-        hairlineBorder = SlateBorderLight
+        hairlineBorder = SlateBorderLight,
+        gridBorderStrong = GridBorderStrong,
+        maroonPrimary = MaroonPrimary,
+        limeGreen = LimeGreen
     )
 }
 
 private val LightColorScheme = lightColorScheme(
-    primary = DeepNavy,
+    primary = MaroonPrimary,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFDCE6F9),
-    onPrimaryContainer = DeepNavy,
-    secondary = SolarAmberDark,
+    primaryContainer = MaroonContainerLight,
+    onPrimaryContainer = MaroonDark,
+    secondary = LimeGreen,
     onSecondary = Color.White,
-    secondaryContainer = SolarAmberSoft,
-    onSecondaryContainer = Color(0xFF78350F),
-    tertiary = EmeraldSuccess,
+    secondaryContainer = LimeSoft,
+    onSecondaryContainer = Color(0xFF2B4D12),
+    tertiary = LimeGreenDark,
     onTertiary = Color.White,
-    tertiaryContainer = EmeraldSoft,
-    onTertiaryContainer = Color(0xFF064E3B),
+    tertiaryContainer = LimeSoft,
+    onTertiaryContainer = Color(0xFF1F3B0B),
     background = LightCanvas,
     onBackground = SlateInk,
     surface = LightCard,
     onSurface = SlateInk,
     surfaceVariant = LightSurfaceVariant,
     onSurfaceVariant = SlateMuted,
-    outline = SlateBorderLight,
+    outline = GridBorderStrong,
     error = BusyCreditRed,
     onError = Color.White,
     errorContainer = Color(0xFFFEE2E2),
@@ -67,24 +72,24 @@ private val LightColorScheme = lightColorScheme(
 )
 
 private val DarkColorScheme = darkColorScheme(
-    primary = SolarAmber,
-    onPrimary = DeepNavy,
-    primaryContainer = NavyContainer,
-    onPrimaryContainer = Color(0xFFE2ECFF),
-    secondary = SolarAmber,
-    onSecondary = DeepNavy,
-    secondaryContainer = SolarAmberDarkBg,
-    onSecondaryContainer = Color(0xFFFDE68A),
-    tertiary = Color(0xFF34D399),
-    onTertiary = Color(0xFF022C22),
-    tertiaryContainer = EmeraldDarkBg,
-    onTertiaryContainer = Color(0xFFA7F3D0),
+    primary = Color(0xFFE57373),
+    onPrimary = Color(0xFF3E0B0A),
+    primaryContainer = MaroonContainerDark,
+    onPrimaryContainer = Color(0xFFFFDAD8),
+    secondary = LimeGreen,
+    onSecondary = Color(0xFF132207),
+    secondaryContainer = LimeDarkBg,
+    onSecondaryContainer = Color(0xFFDCEDC8),
+    tertiary = Color(0xFF9CCC65),
+    onTertiary = Color(0xFF132207),
+    tertiaryContainer = LimeDarkBg,
+    onTertiaryContainer = Color(0xFFDCEDC8),
     background = DarkCanvas,
-    onBackground = Color(0xFFF1F5F9),
+    onBackground = Color(0xFFF8FAFC),
     surface = DarkCard,
-    onSurface = Color(0xFFF1F5F9),
+    onSurface = Color(0xFFF8FAFC),
     surfaceVariant = DarkSurfaceVariant,
-    onSurfaceVariant = Color(0xFF94A3B8),
+    onSurfaceVariant = Color(0xFFCBD5E1),
     outline = SlateBorderDark,
     error = BusyCreditRedDark,
     onError = Color(0xFF450A0A),
@@ -93,16 +98,16 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 private val NBSolarShapes = Shapes(
-    extraSmall = RoundedCornerShape(4.dp),
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(12.dp),
-    large = RoundedCornerShape(16.dp),
-    extraLarge = RoundedCornerShape(24.dp)
+    extraSmall = RoundedCornerShape(3.dp),
+    small = RoundedCornerShape(6.dp),
+    medium = RoundedCornerShape(8.dp),
+    large = RoundedCornerShape(10.dp),
+    extraLarge = RoundedCornerShape(16.dp)
 )
 
 @Composable
 fun NBSolarTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
@@ -110,25 +115,31 @@ fun NBSolarTheme(
         SolarExtendedColors(
             debitBlue = BusyDebitBlueDark,
             creditRed = BusyCreditRedDark,
-            solarAmber = SolarAmber,
-            solarAmberContainer = SolarAmberDarkBg,
-            emerald = Color(0xFF34D399),
-            emeraldContainer = EmeraldDarkBg,
-            navyHeader = Color(0xFF091224),
+            solarAmber = Color(0xFFE57373),
+            solarAmberContainer = MaroonContainerDark,
+            emerald = LimeGreen,
+            emeraldContainer = LimeDarkBg,
+            navyHeader = MaroonDark,
             gridHeader = BusyGridHeaderDark,
-            hairlineBorder = SlateBorderDark
+            hairlineBorder = SlateBorderDark,
+            gridBorderStrong = SlateBorderDark,
+            maroonPrimary = MaroonPrimary,
+            limeGreen = LimeGreen
         )
     } else {
         SolarExtendedColors(
             debitBlue = BusyDebitBlue,
             creditRed = BusyCreditRed,
-            solarAmber = SolarAmberDark,
-            solarAmberContainer = SolarAmberSoft,
-            emerald = EmeraldSuccess,
-            emeraldContainer = EmeraldSoft,
-            navyHeader = DeepNavy,
+            solarAmber = MaroonPrimary,
+            solarAmberContainer = MaroonContainerLight,
+            emerald = LimeGreen,
+            emeraldContainer = LimeSoft,
+            navyHeader = MaroonPrimary,
             gridHeader = BusyGridHeaderLight,
-            hairlineBorder = SlateBorderLight
+            hairlineBorder = SlateBorderLight,
+            gridBorderStrong = GridBorderStrong,
+            maroonPrimary = MaroonPrimary,
+            limeGreen = LimeGreen
         )
     }
 

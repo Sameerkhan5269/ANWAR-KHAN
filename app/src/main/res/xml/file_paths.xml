@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="shared_exports" path="exports/" />
+    <cache-path name="shared_proposals" path="proposals/" />
+    <cache-path name="camera_captures" path="camera/" />
     <files-path name="vault_docs" path="vault/" />
+    <files-path name="site_bills" path="site_bills/" />
+    <files-path name="chat_videos" path="chat_videos/" />
 </paths>

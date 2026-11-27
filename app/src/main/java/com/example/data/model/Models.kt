@@ -3,11 +3,11 @@ package com.example.data.model
 import java.util.UUID
 
 enum class StaffRole(val label: String, val badge: String, val description: String) {
-    OWNER("Owner / CEO", "OWNER", "Full access: Pipeline, Inventory, BUSY 21 Accounting, Partner Splits, Team & Delete"),
-    ACCOUNTS("Accounts Manager", "ACCOUNTS", "Full BUSY 21 Accounting, AI Bank/Bill Auto-Import, Inventory & Party Ledgers"),
-    OFFICE("Office & Docs Coordinator", "OFFICE", "Manage Leads, DISCOM files, DCR/KYC Docs & Parties (Partner splits hidden)"),
-    SUPERVISOR("Site Supervisor", "SUPERVISOR", "Strict Privacy: Zero ₹ visibility. Installation, Net Metering, Photos, DCR/Meters & Stock Issue"),
-    HELPER("Field Helper", "HELPER", "Strict Privacy: Zero ₹ visibility. Installation checklists & site geotag photo uploads");
+    OWNER("Owner / CEO", "OWNER", "Full access: Pipeline, Inventory, BUSY 21 Accounting, Partner Splits, Imprest & Team"),
+    ACCOUNTS("Accounts Manager", "ACCOUNTS", "Full BUSY 21 Accounting, Party Profitability, Imprest Top-Up, Inventory & Ledgers"),
+    OFFICE("Office & Docs Coordinator", "OFFICE", "Manage Leads, Follow-Ups, DISCOM files, DCR/KYC Docs & Parties"),
+    SUPERVISOR("Site Supervisor", "SUPERVISOR", "Field Privacy Mode: Installation, Net Metering, On-Site Purchases, Imprest & Photos"),
+    HELPER("Field Helper", "HELPER", "Field Privacy Mode: Installation checklists, On-Site Purchases & site photo uploads");
 
     companion object {
         fun fromString(raw: String?): StaffRole =
@@ -21,21 +21,93 @@ data class StaffUser(
     val pin: String,
     val displayName: String,
     val role: StaffRole,
-    val isBuiltIn: Boolean = false
+    val isBuiltIn: Boolean = false,
+    val imprestBalance: Double = 0.0,
+    val assignedDivision: ProjectDivision? = null
 )
 
 enum class LeadSource(val label: String, val shortLabel: String) {
-    NB_DIRECT("NB Engineering (Direct)", "NB Direct"),
+    NB_DIRECT("NB Engineering Direct", "NB Direct"),
     THAKUR_JI("Thakur Ji Reference", "Thakur Ji"),
     PERSONAL_REF("Personal Reference", "Personal Ref");
 
     companion object {
         fun fromString(raw: String?): LeadSource =
             entries.firstOrNull {
-                it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true)
+                it.name.equals(raw, ignoreCase = true) ||
+                    it.label.equals(raw, ignoreCase = true) ||
+                    raw?.contains("NB Engineering", ignoreCase = true) == true && it == NB_DIRECT
             } ?: NB_DIRECT
     }
 }
+
+enum class ProjectDivision(val label: String, val shortLabel: String) {
+    SOLAR("Solar EPC", "Solar"),
+    WIND("Wind EPC", "Wind"),
+    HYBRID("Solar + Wind Hybrid", "Hybrid");
+
+    companion object {
+        fun fromString(raw: String?): ProjectDivision =
+            entries.firstOrNull {
+                it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true)
+            } ?: SOLAR
+    }
+}
+
+enum class RoofStructureType(val label: String) {
+    RCC_ROOF("RCC Roof"),
+    TIN_SHED("Tin Shed"),
+    ELEVATED_GAZEBO("Elevated Gazebo/Pergola");
+
+    companion object {
+        fun fromString(raw: String?): RoofStructureType =
+            entries.firstOrNull {
+                it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true)
+            } ?: RCC_ROOF
+    }
+}
+
+enum class LeadStatus(val label: String) {
+    NEW_ENQUIRY("New Enquiry"),
+    SURVEY_DONE("Survey Done"),
+    QUOTATION_SENT("Quotation Sent"),
+    CONVERTED("Converted to Installation");
+
+    companion object {
+        fun fromString(raw: String?): LeadStatus =
+            entries.firstOrNull {
+                it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true)
+            } ?: NEW_ENQUIRY
+    }
+}
+
+enum class SitePurchasePaymentSource(val label: String) {
+    SUPERVISOR_IMPREST("Supervisor Imprest Cash"),
+    COMPANY_UPI("Company UPI/Online"),
+    VENDOR_CREDIT("Local Vendor Credit/Udhaar");
+
+    companion object {
+        fun fromString(raw: String?): SitePurchasePaymentSource =
+            entries.firstOrNull {
+                it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true)
+            } ?: SUPERVISOR_IMPREST
+    }
+}
+
+data class SiteMaterialPurchase(
+    val id: String = UUID.randomUUID().toString(),
+    val itemDescription: String,
+    val quantity: String = "1",
+    val vendorName: String = "",
+    val amount: Double = 0.0,
+    val paymentSource: SitePurchasePaymentSource = SitePurchasePaymentSource.SUPERVISOR_IMPREST,
+    val billPhotoPath: String = "",
+    val billPhotoBase64: String = "",
+    val purchasedByLoginId: String = "",
+    val purchasedByName: String = "",
+    val purchaseDate: String = "",
+    val linkedVoucherNo: String = ""
+)
 
 enum class WorkflowSection(val index: Int, val title: String, val defaultSteps: List<String>) {
     LEAD_FILE(
@@ -119,9 +191,19 @@ data class PartyProject(
     val partyName: String,
     val mobile: String = "",
     val address: String = "",
+    val cityOrLocation: String = "",
     val consumerNumber: String = "",
     val capacityKw: Double = 3.0,
+    val division: ProjectDivision = ProjectDivision.SOLAR,
     val leadSource: LeadSource = LeadSource.NB_DIRECT,
+    val referrerName: String = "",
+    val referrerPhone: String = "",
+    val leadDate: String = "",
+    val roofStructureType: RoofStructureType = RoofStructureType.RCC_ROOF,
+    val quotedRatePerKw: Double = 0.0,
+    val nextFollowUpDate: String = "",
+    val siteSurveyNotes: String = "",
+    val leadStatus: LeadStatus = LeadStatus.NEW_ENQUIRY,
     val projectValue: Double = 0.0,
     val receivedAmount: Double = 0.0,
     val loan1Amount: Double = 0.0,
@@ -130,15 +212,19 @@ data class PartyProject(
     val loan2Received: Boolean = false,
     val subsidyAmount: Double = 0.0,
     val partnerCommissionPct: Double = 0.0,
+    val referralPaid: Boolean = false,
+    val referralPayoutDate: String = "",
     val createdDate: String = "",
     val stages: List<WorkflowStage> = defaultWorkflowStages(),
     val documents: List<PartyDocument> = emptyList(),
-    val siteLogs: List<SiteLogEntry> = emptyList()
+    val siteLogs: List<SiteLogEntry> = emptyList(),
+    val sitePurchases: List<SiteMaterialPurchase> = emptyList()
 ) {
     val completedStagesCount: Int get() = stages.count { it.completed }
     val totalStagesCount: Int get() = stages.size.coerceAtLeast(1)
     val progressFraction: Float get() = completedStagesCount.toFloat() / totalStagesCount.toFloat()
     val pendingAmount: Double get() = (projectValue - receivedAmount).coerceAtLeast(0.0)
+    val totalOnSitePurchases: Double get() = sitePurchases.sumOf { it.amount }
     val currentStageTitle: String
         get() = stages.firstOrNull { !it.completed }?.title ?: "Account Closed"
 }
@@ -177,7 +263,8 @@ data class DcrPanel(
     val status: PanelStatus = PanelStatus.IN_STOCK,
     val linkedPartyId: String = "",
     val linkedPartyName: String = "",
-    val addedDate: String = ""
+    val addedDate: String = "",
+    val unitCost: Double = 12200.0
 )
 
 enum class MeterType(val label: String) {
@@ -211,7 +298,8 @@ data class SolarMeter(
     val makeAndPhase: String = "L&T / 1-Phase",
     val testingStatus: DiscomTestingStatus = DiscomTestingStatus.PENDING,
     val installedPartyId: String = "",
-    val installedPartyName: String = ""
+    val installedPartyName: String = "",
+    val unitCost: Double = 2400.0
 )
 
 data class MaterialIssueLog(
@@ -232,11 +320,53 @@ data class RawMaterial(
     val purchasedQty: Double = 0.0,
     val usedQty: Double = 0.0,
     val minStockAlert: Double = 10.0,
+    val unitCost: Double = 0.0,
     val issueLogs: List<MaterialIssueLog> = emptyList()
 ) {
     val remainingQty: Double get() = (purchasedQty - usedQty).coerceAtLeast(0.0)
     val isLowStock: Boolean get() = remainingQty <= minStockAlert
 }
+
+// --- LEKHA JOKHA (DAILY SITE KHARCHA & WORKER ADVANCES) ---
+
+enum class KharchaCategory(val label: String) {
+    SITE_KHARCHA("Daily Site Kharcha"),
+    WORKER_ADVANCE("Worker Advance"),
+    LABOUR("Site Labour");
+
+    companion object {
+        fun fromString(raw: String?): KharchaCategory =
+            entries.firstOrNull { it.name.equals(raw, ignoreCase = true) || it.label.equals(raw, ignoreCase = true) }
+                ?: SITE_KHARCHA
+    }
+}
+
+data class SiteKharchaEntry(
+    val id: String = UUID.randomUUID().toString(),
+    val partyId: String = "",
+    val partyName: String = "",
+    val category: KharchaCategory = KharchaCategory.SITE_KHARCHA,
+    val workerOrTitle: String,
+    val amount: Double,
+    val date: String,
+    val note: String = "",
+    val loggedBy: String = "",
+    val linkedVoucherNo: String = ""
+)
+
+// --- REAL-TIME TEAM CHAT & VIDEO MESSAGES ---
+
+data class TeamChatMessage(
+    val id: String = UUID.randomUUID().toString(),
+    val senderLoginId: String,
+    val senderName: String,
+    val senderRole: StaffRole,
+    val text: String,
+    val videoPath: String = "",
+    val videoLabel: String = "",
+    val timestamp: String,
+    val division: ProjectDivision? = null
+)
 
 // --- BUSY 21 ACCOUNTING MODELS ---
 
@@ -263,7 +393,7 @@ data class BusyAccount(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
     val group: BusyAccountGroup,
-    val openingBalance: Double = 0.0, // Positive = Dr, Negative = Cr
+    val openingBalance: Double = 0.0,
     val gstin: String = "",
     val mobile: String = "",
     val linkedPartyId: String = "",
@@ -341,6 +471,7 @@ data class BusyVoucher(
     val billRefType: BillRefType = BillRefType.ON_ACCOUNT,
     val billRefNo: String = "",
     val utrOrChequeNo: String = "",
+    val paidBy: String = "",
     val narration: String = "",
     val lineItems: List<BusyLineItem> = emptyList(),
     val partyGstin: String = "",
@@ -352,7 +483,7 @@ data class BusyVoucher(
 data class ParsedBankRow(
     val id: String = UUID.randomUUID().toString(),
     val date: String,
-    val voucherType: BusyVoucherType, // PAYMENT or RECEIPT
+    val voucherType: BusyVoucherType,
     val partyName: String,
     val matchedAccountId: String = "",
     val amount: Double,
@@ -397,6 +528,16 @@ data class ParsedWhatsAppUpdate(
     val summaryNote: String
 )
 
+data class ParsedLekhaJokhaLine(
+    val id: String = UUID.randomUUID().toString(),
+    val rawLine: String,
+    val matchedPartyId: String?,
+    val matchedPartyName: String,
+    val category: KharchaCategory,
+    val workerOrTitle: String,
+    val amount: Double
+)
+
 // --- UNIFIED SNAPSHOT ---
 
 data class AppDatabaseSnapshot(
@@ -407,5 +548,7 @@ data class AppDatabaseSnapshot(
     val rawMaterials: List<RawMaterial> = emptyList(),
     val busyAccounts: List<BusyAccount> = emptyList(),
     val busyItems: List<BusyItem> = emptyList(),
-    val busyVouchers: List<BusyVoucher> = emptyList()
+    val busyVouchers: List<BusyVoucher> = emptyList(),
+    val siteKharcha: List<SiteKharchaEntry> = emptyList(),
+    val teamChat: List<TeamChatMessage> = emptyList()
 )

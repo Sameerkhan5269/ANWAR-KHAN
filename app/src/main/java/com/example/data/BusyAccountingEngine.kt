@@ -5,8 +5,12 @@ import com.example.data.model.BusyAccount
 import com.example.data.model.BusyAccountGroup
 import com.example.data.model.BusyVoucher
 import com.example.data.model.BusyVoucherType
+import com.example.data.model.DcrPanel
 import com.example.data.model.LeadSource
 import com.example.data.model.PartyProject
+import com.example.data.model.RawMaterial
+import com.example.data.model.SiteKharchaEntry
+import com.example.data.model.SolarMeter
 
 data class AccountLedgerResult(
     val account: BusyAccount,
@@ -72,6 +76,43 @@ data class PartyAgingRow(
     val loan2Amount: Double,
     val loan2Received: Boolean,
     val isOverdueAlert: Boolean
+)
+
+data class DayByDayFinancialRow(
+    val date: String,
+    val voucherCount: Int,
+    val salesBilled: Double,
+    val receiptsCollected: Double,
+    val purchasesBilled: Double,
+    val paymentsAndKharcha: Double
+) {
+    val netCashFlow: Double get() = receiptsCollected - paymentsAndKharcha
+}
+
+data class PartyCostingRow(
+    val party: PartyProject,
+    val dealValue: Double,
+    val mainMaterialCost: Double,
+    val onSitePurchaseCost: Double,
+    val dailyKharchaCost: Double,
+    val referralCommission: Double
+) {
+    val totalDirectCost: Double get() = mainMaterialCost + onSitePurchaseCost + dailyKharchaCost + referralCommission
+    val netProfit: Double get() = dealValue - totalDirectCost
+    val marginPct: Double get() = if (dealValue > 0.0) (netProfit / dealValue) * 100.0 else 0.0
+}
+
+data class ReferralCommissionRow(
+    val partyId: String,
+    val partyName: String,
+    val leadSource: LeadSource,
+    val referrerName: String,
+    val referrerPhone: String,
+    val dealValue: Double,
+    val commissionPct: Double,
+    val commissionAmount: Double,
+    val isPaid: Boolean,
+    val payoutDate: String
 )
 
 /**
@@ -298,5 +339,89 @@ object BusyAccountingEngine {
                 isOverdueAlert = isOverdue
             )
         }.sortedByDescending { it.pendingDues }
+    }
+
+    fun computeDayByDayReport(
+        vouchers: List<BusyVoucher>,
+        siteKharcha: List<SiteKharchaEntry>
+    ): List<DayByDayFinancialRow> {
+        val allDates = (vouchers.map { it.date } + siteKharcha.map { it.date })
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sortedDescending()
+
+        return allDates.map { date ->
+            val dayVouchers = vouchers.filter { it.date == date }
+            val dayKharcha = siteKharcha.filter { it.date == date && it.linkedVoucherNo.isBlank() }
+            val sales = dayVouchers.filter { it.type == BusyVoucherType.SALES }.sumOf { it.totalAmount }
+            val receipts = dayVouchers.filter { it.type == BusyVoucherType.RECEIPT }.sumOf { it.totalAmount }
+            val purchases = dayVouchers.filter { it.type == BusyVoucherType.PURCHASE }.sumOf { it.totalAmount }
+            val payments = dayVouchers.filter { it.type == BusyVoucherType.PAYMENT }.sumOf { it.totalAmount } +
+                dayKharcha.sumOf { it.amount }
+            DayByDayFinancialRow(
+                date = date,
+                voucherCount = dayVouchers.size + dayKharcha.size,
+                salesBilled = sales,
+                receiptsCollected = receipts,
+                purchasesBilled = purchases,
+                paymentsAndKharcha = payments
+            )
+        }
+    }
+
+    fun computePartyCostingReport(
+        parties: List<PartyProject>,
+        dcrPanels: List<DcrPanel>,
+        solarMeters: List<SolarMeter>,
+        rawMaterials: List<RawMaterial>,
+        siteKharcha: List<SiteKharchaEntry>
+    ): List<PartyCostingRow> {
+        return parties.map { party ->
+            val panelCost = dcrPanels.filter { it.linkedPartyId == party.id }.sumOf { it.unitCost }
+            val meterCost = solarMeters.filter { it.installedPartyId == party.id }.sumOf { it.unitCost }
+            val bosCost = rawMaterials.sumOf { rm ->
+                rm.issueLogs.filter { it.partyId == party.id }.sumOf { it.quantity * rm.unitCost }
+            }
+            val mainMat = panelCost + meterCost + bosCost
+            val siteMat = party.totalOnSitePurchases
+            val kharcha = siteKharcha.filter { it.partyId == party.id }.sumOf { it.amount }
+            val pct = if (party.partnerCommissionPct > 0.0) party.partnerCommissionPct else {
+                if (party.leadSource == LeadSource.THAKUR_JI) 10.0 else 0.0
+            }
+            val refComm = party.projectValue * (pct / 100.0)
+            PartyCostingRow(
+                party = party,
+                dealValue = party.projectValue,
+                mainMaterialCost = mainMat,
+                onSitePurchaseCost = siteMat,
+                dailyKharchaCost = kharcha,
+                referralCommission = refComm
+            )
+        }
+    }
+
+    fun computeReferralCommissions(parties: List<PartyProject>): List<ReferralCommissionRow> {
+        return parties.mapNotNull { party ->
+            val pct = if (party.partnerCommissionPct > 0.0) party.partnerCommissionPct else {
+                if (party.leadSource == LeadSource.THAKUR_JI) 10.0 else 0.0
+            }
+            val isRef = party.leadSource != LeadSource.NB_DIRECT || pct > 0.0 || party.referrerName.isNotBlank()
+            if (!isRef) return@mapNotNull null
+            val amount = party.projectValue * (pct / 100.0)
+            ReferralCommissionRow(
+                partyId = party.id,
+                partyName = party.partyName,
+                leadSource = party.leadSource,
+                referrerName = party.referrerName.ifBlank {
+                    if (party.leadSource == LeadSource.THAKUR_JI) "Thakur Ji Partner" else "Personal Referrer"
+                },
+                referrerPhone = party.referrerPhone,
+                dealValue = party.projectValue,
+                commissionPct = pct,
+                commissionAmount = amount,
+                isPaid = party.referralPaid,
+                payoutDate = party.referralPayoutDate
+            )
+        }
     }
 }

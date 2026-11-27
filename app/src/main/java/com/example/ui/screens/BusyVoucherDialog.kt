@@ -67,6 +67,7 @@ fun BusyVoucherDialog(
         billRefType: BillRefType,
         billRefNo: String,
         utrNo: String,
+        paidBy: String,
         narration: String,
         lineItems: List<BusyLineItem>
     ) -> Boolean
@@ -114,6 +115,7 @@ fun BusyVoucherDialog(
     }
     var billRefNo by remember { mutableStateOf("") }
     var utrNo by remember { mutableStateOf("") }
+    var paidBy by remember { mutableStateOf("") }
     var narration by remember { mutableStateOf("") }
 
     // Line items for Sales (F8) & Purchase (F9)
@@ -364,6 +366,16 @@ fun BusyVoucherDialog(
                     }
                 }
 
+                if (type == BusyVoucherType.PAYMENT || type == BusyVoucherType.RECEIPT) {
+                    OutlinedTextField(
+                        value = paidBy,
+                        onValueChange = { paidBy = it },
+                        label = { Text(if (type == BusyVoucherType.RECEIPT) "Paid By (Person / Cash / Online Sender)" else "Paid By (Authorizer / Staff Name)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
                 OutlinedTextField(
                     value = narration,
                     onValueChange = { narration = it },
@@ -417,6 +429,7 @@ fun BusyVoucherDialog(
                         billRefType,
                         billRefNo,
                         utrNo,
+                        paidBy,
                         narration,
                         lineItems.toList()
                     )
