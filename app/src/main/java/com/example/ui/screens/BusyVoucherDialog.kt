@@ -46,8 +46,10 @@ import com.example.data.model.BusyItem
 import com.example.data.model.BusyLineItem
 import com.example.data.model.BusyVoucherType
 import com.example.data.model.LeadSource
+import androidx.compose.ui.platform.testTag
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalSolarColors
+import java.util.UUID
 
 @Composable
 fun BusyVoucherDialog(
@@ -69,10 +71,13 @@ fun BusyVoucherDialog(
         utrNo: String,
         paidBy: String,
         narration: String,
-        lineItems: List<BusyLineItem>
+        lineItems: List<BusyLineItem>,
+        txnId: String
     ) -> Boolean
 ) {
     val solarColors = LocalSolarColors.current
+    var txnUuid by remember { mutableStateOf(UUID.randomUUID().toString()) }
+    var isSubmitting by remember { mutableStateOf(false) }
     var type by remember { mutableStateOf(initialType) }
     var date by remember { mutableStateOf(todayIsoDate()) }
 
@@ -415,8 +420,10 @@ fun BusyVoucherDialog(
         confirmButton = {
             Button(
                 onClick = {
+                    if (isSubmitting) return@Button
                     val p = partyAcc ?: return@Button
                     val c = contraAcc ?: return@Button
+                    isSubmitting = true
                     val posted = onPost(
                         type,
                         date,
@@ -431,13 +438,20 @@ fun BusyVoucherDialog(
                         utrNo,
                         paidBy,
                         narration,
-                        lineItems.toList()
+                        lineItems.toList(),
+                        txnUuid
                     )
-                    if (posted) onDismiss()
+                    if (posted) {
+                        onDismiss()
+                    } else {
+                        isSubmitting = false
+                        txnUuid = UUID.randomUUID().toString()
+                    }
                 },
-                enabled = partyAcc != null && contraAcc != null && grandTotal > 0.0
+                enabled = partyAcc != null && contraAcc != null && grandTotal > 0.0 && !isSubmitting,
+                modifier = Modifier.testTag("busy_voucher_submit_btn")
             ) {
-                Text("Save Voucher (${type.shortcut})")
+                Text(if (isSubmitting) "Saving..." else "Save Voucher (${type.shortcut})")
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

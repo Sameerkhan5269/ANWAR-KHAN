@@ -74,10 +74,18 @@ object JsonCodec {
                 put("leadStatus", p.leadStatus.name)
                 put("projectValue", p.projectValue)
                 put("receivedAmount", p.receivedAmount)
+                put("sanctionedLoanAmount", p.sanctionedLoanAmount)
                 put("loan1Amount", p.loan1Amount)
                 put("loan1Received", p.loan1Received)
+                put("loan1Date", p.loan1Date)
                 put("loan2Amount", p.loan2Amount)
                 put("loan2Received", p.loan2Received)
+                put("loan2Date", p.loan2Date)
+                put("installationDoneDate", p.installationDoneDate)
+                put("rsebFileApplied", p.rsebFileApplied)
+                put("mcoOk", p.mcoOk)
+                put("meterInstalled", p.meterInstalled)
+                put("subsidyReceived", p.subsidyReceived)
                 put("subsidyAmount", p.subsidyAmount)
                 put("partnerCommissionPct", p.partnerCommissionPct)
                 put("referralPaid", p.referralPaid)
@@ -265,10 +273,18 @@ object JsonCodec {
                         leadStatus = LeadStatus.fromString(o.optString("leadStatus")),
                         projectValue = o.optDouble("projectValue", 0.0).safeOrZero(),
                         receivedAmount = o.optDouble("receivedAmount", 0.0).safeOrZero(),
+                        sanctionedLoanAmount = o.optDouble("sanctionedLoanAmount", 0.0).safeOrZero(),
                         loan1Amount = o.optDouble("loan1Amount", 0.0).safeOrZero(),
                         loan1Received = o.optBoolean("loan1Received", false),
+                        loan1Date = o.optString("loan1Date"),
                         loan2Amount = o.optDouble("loan2Amount", 0.0).safeOrZero(),
                         loan2Received = o.optBoolean("loan2Received", false),
+                        loan2Date = o.optString("loan2Date"),
+                        installationDoneDate = o.optString("installationDoneDate"),
+                        rsebFileApplied = o.optBoolean("rsebFileApplied", false),
+                        mcoOk = o.optBoolean("mcoOk", false),
+                        meterInstalled = o.optBoolean("meterInstalled", false),
+                        subsidyReceived = o.optBoolean("subsidyReceived", false),
                         subsidyAmount = o.optDouble("subsidyAmount", 0.0).safeOrZero(),
                         partnerCommissionPct = o.optDouble("partnerCommissionPct", 0.0).safeOrZero(),
                         referralPaid = o.optBoolean("referralPaid", false),
@@ -703,6 +719,169 @@ object JsonCodec {
             }
         }
     }
+
+    // --- LOANS & MCO TRACKING (`nb_loans_mco`) ---
+    fun encodeLoanMcoRecords(list: List<LoanMcoRecord>): JSONArray = JSONArray().apply {
+        list.forEach { rec ->
+            put(JSONObject().apply {
+                put("partyId", rec.partyId)
+                put("sanctionedLoanAmount", rec.sanctionedLoanAmount)
+                put("loan1Amount", rec.loan1Amount)
+                put("loan1Received", rec.loan1Received)
+                put("loan1Date", rec.loan1Date)
+                put("loan2Amount", rec.loan2Amount)
+                put("loan2Received", rec.loan2Received)
+                put("loan2Date", rec.loan2Date)
+                put("installationDoneDate", rec.installationDoneDate)
+                put("rsebFileApplied", rec.rsebFileApplied)
+                put("mcoOk", rec.mcoOk)
+                put("meterInstalled", rec.meterInstalled)
+                put("subsidyReceived", rec.subsidyReceived)
+                put("subsidyAmount", rec.subsidyAmount)
+            })
+        }
+    }
+
+    fun decodeLoanMcoRecords(arr: JSONArray?): List<LoanMcoRecord> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val partyId = o.optString("partyId").trim()
+                if (partyId.isBlank()) continue
+                add(
+                    LoanMcoRecord(
+                        partyId = partyId,
+                        sanctionedLoanAmount = o.optDouble("sanctionedLoanAmount", 0.0).safeOrZero(),
+                        loan1Amount = o.optDouble("loan1Amount", 0.0).safeOrZero(),
+                        loan1Received = o.optBoolean("loan1Received", false),
+                        loan1Date = o.optString("loan1Date"),
+                        loan2Amount = o.optDouble("loan2Amount", 0.0).safeOrZero(),
+                        loan2Received = o.optBoolean("loan2Received", false),
+                        loan2Date = o.optString("loan2Date"),
+                        installationDoneDate = o.optString("installationDoneDate"),
+                        rsebFileApplied = o.optBoolean("rsebFileApplied", false),
+                        mcoOk = o.optBoolean("mcoOk", false),
+                        meterInstalled = o.optBoolean("meterInstalled", false),
+                        subsidyReceived = o.optBoolean("subsidyReceived", false),
+                        subsidyAmount = o.optDouble("subsidyAmount", 0.0).safeOrZero()
+                    )
+                )
+            }
+        }
+    }
+
+    fun extractLoanMcoRecords(parties: List<PartyProject>): List<LoanMcoRecord> =
+        parties.map { p ->
+            LoanMcoRecord(
+                partyId = p.id,
+                sanctionedLoanAmount = p.sanctionedLoanAmount,
+                loan1Amount = p.loan1Amount,
+                loan1Received = p.isLoan1Done,
+                loan1Date = p.loan1Date,
+                loan2Amount = p.loan2Amount,
+                loan2Received = p.isLoan2Done,
+                loan2Date = p.loan2Date,
+                installationDoneDate = p.installationDoneDate,
+                rsebFileApplied = p.isRsebFileApplied,
+                mcoOk = p.isMcoOk,
+                meterInstalled = p.isMeterInstalled,
+                subsidyReceived = p.isSubsidyReceived,
+                subsidyAmount = p.subsidyAmount
+            )
+        }
+
+    fun mergeLoanMcoOverlay(
+        parties: List<PartyProject>,
+        records: List<LoanMcoRecord>
+    ): List<PartyProject> {
+        if (records.isEmpty()) return parties
+        val byPartyId = records.associateBy { it.partyId }
+        return parties.map { p ->
+            val rec = byPartyId[p.id] ?: return@map p
+            val syncedStages = p.stages.map { st ->
+                val targetDone = when (st.id) {
+                    "LEAD_FILE_3" -> rec.rsebFileApplied
+                    "LOAN_2" -> rec.loan1Received
+                    "LOAN_3" -> rec.loan2Received
+                    "INSTALLATION_3" -> rec.installationDoneDate.isNotBlank() || st.completed
+                    "NET_METERING_2" -> rec.meterInstalled
+                    "NET_METERING_3" -> rec.mcoOk
+                    "SUBSIDY_CLOSE_2" -> rec.subsidyReceived
+                    else -> st.completed
+                }
+                if (st.completed == targetDone) st else st.copy(completed = targetDone)
+            }
+            p.copy(
+                sanctionedLoanAmount = rec.sanctionedLoanAmount,
+                loan1Amount = rec.loan1Amount,
+                loan1Received = rec.loan1Received,
+                loan1Date = rec.loan1Date,
+                loan2Amount = rec.loan2Amount,
+                loan2Received = rec.loan2Received,
+                loan2Date = rec.loan2Date,
+                installationDoneDate = rec.installationDoneDate,
+                rsebFileApplied = rec.rsebFileApplied,
+                mcoOk = rec.mcoOk,
+                meterInstalled = rec.meterInstalled,
+                subsidyReceived = rec.subsidyReceived,
+                subsidyAmount = rec.subsidyAmount,
+                stages = syncedStages
+            )
+        }
+    }
+
+    // --- BUNDLED MODULE PAYLOADS (`nb_inventory`, `nb_busy_vouchers`, `nb_security_config`) ---
+    fun encodeInventoryBundle(
+        dcrPanels: List<DcrPanel>,
+        solarMeters: List<SolarMeter>,
+        rawMaterials: List<RawMaterial>
+    ): JSONObject = JSONObject().apply {
+        put("dcrPanels", encodeDcrPanels(dcrPanels))
+        put("solarMeters", encodeSolarMeters(solarMeters))
+        put("rawMaterials", encodeRawMaterials(rawMaterials))
+    }
+
+    fun decodeInventoryBundle(
+        obj: JSONObject
+    ): Triple<List<DcrPanel>, List<SolarMeter>, List<RawMaterial>> = Triple(
+        decodeDcrPanels(obj.optJSONArray("dcrPanels")),
+        decodeSolarMeters(obj.optJSONArray("solarMeters")),
+        decodeRawMaterials(obj.optJSONArray("rawMaterials"))
+    )
+
+    data class BusyVoucherBundle(
+        val accounts: List<BusyAccount>,
+        val items: List<BusyItem>,
+        val vouchers: List<BusyVoucher>,
+        val siteKharcha: List<SiteKharchaEntry>
+    )
+
+    fun encodeBusyVouchersBundle(
+        accounts: List<BusyAccount>,
+        items: List<BusyItem>,
+        vouchers: List<BusyVoucher>,
+        siteKharcha: List<SiteKharchaEntry>
+    ): JSONObject = JSONObject().apply {
+        put("busyAccounts", encodeBusyAccounts(accounts))
+        put("busyItems", encodeBusyItems(items))
+        put("busyVouchers", encodeBusyVouchers(vouchers))
+        put("siteKharcha", encodeSiteKharcha(siteKharcha))
+    }
+
+    fun decodeBusyVouchersBundle(obj: JSONObject): BusyVoucherBundle = BusyVoucherBundle(
+        accounts = decodeBusyAccounts(obj.optJSONArray("busyAccounts")),
+        items = decodeBusyItems(obj.optJSONArray("busyItems")),
+        vouchers = decodeBusyVouchers(obj.optJSONArray("busyVouchers")),
+        siteKharcha = decodeSiteKharcha(obj.optJSONArray("siteKharcha"))
+    )
+
+    fun encodeSecurityConfig(staffUsers: List<StaffUser>): JSONObject = JSONObject().apply {
+        put("staffUsers", encodeStaffUsers(staffUsers))
+    }
+
+    fun decodeSecurityConfig(obj: JSONObject): List<StaffUser> =
+        decodeStaffUsers(obj.optJSONArray("staffUsers"))
 
     private fun Double.safeOrZero(): Double = if (this.isNaN() || this.isInfinite()) 0.0 else this
 }

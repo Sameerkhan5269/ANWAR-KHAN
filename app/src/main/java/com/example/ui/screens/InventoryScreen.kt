@@ -71,6 +71,7 @@ import com.example.ui.theme.DeepNavy
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalSolarColors
 import com.example.ui.theme.SolarAmber
+import java.util.UUID
 
 @Composable
 fun InventoryScreen(
@@ -81,12 +82,12 @@ fun InventoryScreen(
     rawMaterials: List<RawMaterial>,
     parties: List<PartyProject>,
     onSearchChange: (String) -> Unit,
-    onAddDcrPanelsBatch: (serials: String, brand: String, wattage: Int, supplier: String, invoiceNo: String) -> Unit,
-    onAllocatePanel: (panelId: String, party: PartyProject?) -> Unit,
-    onAddMeter: (serial: String, type: MeterType, makePhase: String, status: DiscomTestingStatus) -> Unit,
-    onUpdateMeter: (meterId: String, status: DiscomTestingStatus, party: PartyProject?) -> Unit,
-    onAddRawStock: (materialId: String?, name: String, category: String, unit: String, supplier: String, qty: Double, minAlert: Double) -> Unit,
-    onIssueRawMaterial: (materialId: String, party: PartyProject, qty: Double) -> Unit
+    onAddDcrPanelsBatch: (serials: String, brand: String, wattage: Int, supplier: String, invoiceNo: String, txnId: String) -> Unit,
+    onAllocatePanel: (panelId: String, party: PartyProject?, txnId: String) -> Unit,
+    onAddMeter: (serial: String, type: MeterType, makePhase: String, status: DiscomTestingStatus, txnId: String) -> Unit,
+    onUpdateMeter: (meterId: String, status: DiscomTestingStatus, party: PartyProject?, txnId: String) -> Unit,
+    onAddRawStock: (materialId: String?, name: String, category: String, unit: String, supplier: String, qty: Double, minAlert: Double, txnId: String) -> Unit,
+    onIssueRawMaterial: (materialId: String, party: PartyProject, qty: Double, txnId: String) -> Unit
 ) {
     val solarColors = LocalSolarColors.current
     val canAllocate = RolePermissions.canAllocateInventory(role)
@@ -494,8 +495,8 @@ fun InventoryScreen(
     if (showAddPanelDialog) {
         AddDcrPanelsDialog(
             onDismiss = { showAddPanelDialog = false },
-            onSave = { serials, brand, watt, sup, inv ->
-                onAddDcrPanelsBatch(serials, brand, watt, sup, inv)
+            onSave = { serials, brand, watt, sup, inv, txnId ->
+                onAddDcrPanelsBatch(serials, brand, watt, sup, inv, txnId)
                 showAddPanelDialog = false
             }
         )
@@ -506,8 +507,8 @@ fun InventoryScreen(
             title = "Allocate Panel ${panel.serialNumber}",
             parties = parties,
             allowClear = panel.status == PanelStatus.ALLOCATED,
-            onSelect = { party ->
-                onAllocatePanel(panel.id, party)
+            onSelect = { party, txnId ->
+                onAllocatePanel(panel.id, party, txnId)
                 allocatingPanel = null
             },
             onDismiss = { allocatingPanel = null }
@@ -517,8 +518,8 @@ fun InventoryScreen(
     if (showAddMeterDialog) {
         AddMeterDialog(
             onDismiss = { showAddMeterDialog = false },
-            onSave = { serial, type, make, status ->
-                onAddMeter(serial, type, make, status)
+            onSave = { serial, type, make, status, txnId ->
+                onAddMeter(serial, type, make, status, txnId)
                 showAddMeterDialog = false
             }
         )
@@ -529,8 +530,8 @@ fun InventoryScreen(
             meter = meter,
             parties = parties,
             onDismiss = { updatingMeter = null },
-            onSave = { status, party ->
-                onUpdateMeter(meter.id, status, party)
+            onSave = { status, party, txnId ->
+                onUpdateMeter(meter.id, status, party, txnId)
                 updatingMeter = null
             }
         )
@@ -544,8 +545,8 @@ fun InventoryScreen(
                 showAddRawDialog = false
                 restockingMaterial = null
             },
-            onSave = { name, cat, unit, sup, qty, min ->
-                onAddRawStock(target?.id, name, cat, unit, sup, qty, min)
+            onSave = { name, cat, unit, sup, qty, min, txnId ->
+                onAddRawStock(target?.id, name, cat, unit, sup, qty, min, txnId)
                 showAddRawDialog = false
                 restockingMaterial = null
             }
@@ -557,8 +558,8 @@ fun InventoryScreen(
             material = rm,
             parties = parties,
             onDismiss = { issuingMaterial = null },
-            onIssue = { party, qty ->
-                onIssueRawMaterial(rm.id, party, qty)
+            onIssue = { party, qty, txnId ->
+                onIssueRawMaterial(rm.id, party, qty, txnId)
                 issuingMaterial = null
             }
         )
@@ -594,8 +595,10 @@ private fun InventoryEmptyCard(
 @Composable
 private fun AddDcrPanelsDialog(
     onDismiss: () -> Unit,
-    onSave: (String, String, Int, String, String) -> Unit
+    onSave: (String, String, Int, String, String, String) -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var serials by remember { mutableStateOf("") }
     var brand by remember { mutableStateOf("Waaree") }
     var wattage by remember { mutableStateOf("540") }
@@ -652,9 +655,14 @@ private fun AddDcrPanelsDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(serials, brand, wattage.toIntOrNull() ?: 540, supplier, invoice) },
-                enabled = serials.isNotBlank()
-            ) { Text("Add to Stock") }
+                onClick = {
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
+                    onSave(serials, brand, wattage.toIntOrNull() ?: 540, supplier, invoice, txnUuid)
+                },
+                enabled = serials.isNotBlank() && !isSubmitting,
+                modifier = Modifier.testTag("add_dcr_panels_submit_btn")
+            ) { Text(if (isSubmitting) "Saving..." else "Add to Stock") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -665,9 +673,11 @@ private fun PartyPickerDialog(
     title: String,
     parties: List<PartyProject>,
     allowClear: Boolean,
-    onSelect: (PartyProject?) -> Unit,
+    onSelect: (PartyProject?, String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -678,7 +688,12 @@ private fun PartyPickerDialog(
             ) {
                 if (allowClear) {
                     OutlinedButton(
-                        onClick = { onSelect(null) },
+                        onClick = {
+                            if (isSubmitting) return@OutlinedButton
+                            isSubmitting = true
+                            onSelect(null, txnUuid)
+                        },
+                        enabled = !isSubmitting,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Return to In Stock (Unallocate)") }
                 }
@@ -687,7 +702,12 @@ private fun PartyPickerDialog(
                 } else {
                     parties.forEach { p ->
                         OutlinedButton(
-                            onClick = { onSelect(p) },
+                            onClick = {
+                                if (isSubmitting) return@OutlinedButton
+                                isSubmitting = true
+                                onSelect(p, txnUuid)
+                            },
+                            enabled = !isSubmitting,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("${p.partyName} (${p.capacityKw} kW)")
@@ -704,8 +724,10 @@ private fun PartyPickerDialog(
 @Composable
 private fun AddMeterDialog(
     onDismiss: () -> Unit,
-    onSave: (String, MeterType, String, DiscomTestingStatus) -> Unit
+    onSave: (String, MeterType, String, DiscomTestingStatus, String) -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var serial by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(MeterType.BI_DIRECTIONAL) }
     var makePhase by remember { mutableStateOf("L&T / 1-Phase") }
@@ -754,9 +776,14 @@ private fun AddMeterDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(serial, type, makePhase, status) },
-                enabled = serial.isNotBlank()
-            ) { Text("Save Meter") }
+                onClick = {
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
+                    onSave(serial, type, makePhase, status, txnUuid)
+                },
+                enabled = serial.isNotBlank() && !isSubmitting,
+                modifier = Modifier.testTag("add_meter_submit_btn")
+            ) { Text(if (isSubmitting) "Saving..." else "Save Meter") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -767,8 +794,10 @@ private fun UpdateMeterDialog(
     meter: SolarMeter,
     parties: List<PartyProject>,
     onDismiss: () -> Unit,
-    onSave: (DiscomTestingStatus, PartyProject?) -> Unit
+    onSave: (DiscomTestingStatus, PartyProject?, String) -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(meter.testingStatus) }
     var selectedParty by remember {
         mutableStateOf(parties.firstOrNull { it.id == meter.installedPartyId })
@@ -811,7 +840,15 @@ private fun UpdateMeterDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(status, selectedParty) }) { Text("Save") }
+            Button(
+                onClick = {
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
+                    onSave(status, selectedParty, txnUuid)
+                },
+                enabled = !isSubmitting,
+                modifier = Modifier.testTag("update_meter_submit_btn")
+            ) { Text(if (isSubmitting) "Saving..." else "Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -821,8 +858,10 @@ private fun UpdateMeterDialog(
 private fun AddRawStockDialog(
     existing: RawMaterial?,
     onDismiss: () -> Unit,
-    onSave: (String, String, String, String, Double, Double) -> Unit
+    onSave: (String, String, String, String, Double, Double, String) -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf(existing?.name.orEmpty()) }
     var category by remember { mutableStateOf(existing?.category ?: "BOS") }
     var unit by remember { mutableStateOf(existing?.unit ?: "kg") }
@@ -890,10 +929,13 @@ private fun AddRawStockDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    onSave(name, category, unit, supplier, safeDouble(qty, 0.0), safeDouble(minAlert, 10.0))
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
+                    onSave(name, category, unit, supplier, safeDouble(qty, 0.0), safeDouble(minAlert, 10.0), txnUuid)
                 },
-                enabled = (existing != null || name.isNotBlank()) && safeDouble(qty, 0.0) > 0.0
-            ) { Text("Update Stock") }
+                enabled = (existing != null || name.isNotBlank()) && safeDouble(qty, 0.0) > 0.0 && !isSubmitting,
+                modifier = Modifier.testTag("add_raw_stock_submit_btn")
+            ) { Text(if (isSubmitting) "Saving..." else "Update Stock") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -904,8 +946,10 @@ private fun IssueMaterialDialog(
     material: RawMaterial,
     parties: List<PartyProject>,
     onDismiss: () -> Unit,
-    onIssue: (PartyProject, Double) -> Unit
+    onIssue: (PartyProject, Double, String) -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var selectedParty by remember { mutableStateOf(parties.firstOrNull()) }
     var qty by remember { mutableStateOf("") }
 
@@ -944,9 +988,15 @@ private fun IssueMaterialDialog(
         },
         confirmButton = {
             Button(
-                onClick = { selectedParty?.let { onIssue(it, safeDouble(qty, 0.0)) } },
-                enabled = selectedParty != null && safeDouble(qty, 0.0) > 0.0
-            ) { Text("Issue Stock") }
+                onClick = {
+                    if (isSubmitting) return@Button
+                    val party = selectedParty ?: return@Button
+                    isSubmitting = true
+                    onIssue(party, safeDouble(qty, 0.0), txnUuid)
+                },
+                enabled = selectedParty != null && safeDouble(qty, 0.0) > 0.0 && !isSubmitting,
+                modifier = Modifier.testTag("issue_material_submit_btn")
+            ) { Text(if (isSubmitting) "Issuing..." else "Issue Stock") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )

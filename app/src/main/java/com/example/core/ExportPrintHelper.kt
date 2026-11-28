@@ -19,16 +19,20 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.content.FileProvider
 import com.example.R
+import com.example.data.DayByDayFinancialRow
 import com.example.data.PartyCostingRow
+import com.example.data.RealCostingCalculator
 import com.example.data.model.BusyAccount
 import com.example.data.model.BusyLineItem
 import com.example.data.model.BusyVoucher
 import com.example.data.model.BusyVoucherType
 import com.example.data.model.CostingStructureType
 import com.example.data.model.DcrPanel
+import com.example.data.model.DetailedProposalOptions
 import com.example.data.model.PartyDocument
 import com.example.data.model.PartyProject
 import com.example.data.model.ProposalFormat
+import com.example.data.model.ProposalModuleType
 import com.example.data.model.RawMaterial
 import com.example.data.model.RealCostingBreakdown
 import com.example.data.model.SiteSurveyDimensions
@@ -47,9 +51,10 @@ object ExportPrintHelper {
 
     const val COMPANY_NAME = "NB ENGINEERING WORKS AND ELECTRICALS"
     const val COMPANY_ADDRESS =
-        "Rama Phosphates Ltd. Plant, Ground Floor, Shed No. 1, Opp. Rama Phosphates Ltd, Udaipur, Rajasthan"
+        "Rama Phosphates Ltd. Plant, Ground Floor, Shed No. 1, Opp. Rama Phosphates Ltd, Udaipur - 313001, Rajasthan"
     const val COMPANY_GSTIN = "08CSZPK9277N2Z8"
     const val COMPANY_TEL = "9929214883"
+    const val COMPANY_TEL_DISPLAY = "+91 99292 14883 / +91 90797 93510"
     const val COMPANY_EMAIL = "nbengineering87@gmail.com"
 
     const val BANK_NAME = "HDFC BANK"
@@ -155,6 +160,10 @@ object ExportPrintHelper {
         .page-break {
             break-before: page;
             page-break-before: always;
+        }
+        .page-after {
+            break-after: page;
+            page-break-after: always;
         }
         table.grid {
             width: 100%;
@@ -291,7 +300,7 @@ object ExportPrintHelper {
             <div>
               <div class="company-title">$COMPANY_NAME</div>
               <div class="company-sub">$COMPANY_ADDRESS</div>
-              <div class="company-meta">GSTIN: $COMPANY_GSTIN &nbsp;|&nbsp; Tel.: $COMPANY_TEL &nbsp;|&nbsp; Email: $COMPANY_EMAIL</div>
+              <div class="company-meta">GSTIN: $COMPANY_GSTIN &nbsp;|&nbsp; Tel.: $COMPANY_TEL_DISPLAY &nbsp;|&nbsp; Email: $COMPANY_EMAIL</div>
             </div>
           </div>
           <div style="flex-shrink:0;">
@@ -987,7 +996,12 @@ object ExportPrintHelper {
         rooftopAfterBitmap: Bitmap? = null,
         inverterBeforeBitmap: Bitmap? = null,
         inverterAfterBitmap: Bitmap? = null,
-        includeOwnerInternalCosting: Boolean = false
+        includeOwnerInternalCosting: Boolean = false,
+        detailedOptions: DetailedProposalOptions = DetailedProposalOptions(
+            capacityKwp = breakdown.capacityKw,
+            baseSystemPriceInr = breakdown.grossQuotedPriceInr,
+            subsidyAmountInr = breakdown.pmSuryaGharSubsidyInr
+        )
     ) {
         val cleanName = customerName.ifBlank { "Valued Solar Consumer" }
         val html = buildProposalHtml(
@@ -1004,7 +1018,8 @@ object ExportPrintHelper {
             rooftopAfterBitmap = rooftopAfterBitmap,
             inverterBeforeBitmap = inverterBeforeBitmap,
             inverterAfterBitmap = inverterAfterBitmap,
-            includeOwnerInternalCosting = includeOwnerInternalCosting
+            includeOwnerInternalCosting = includeOwnerInternalCosting,
+            detailedOptions = detailedOptions
         )
         val slug = cleanName.replace(Regex("[^A-Za-z0-9]+"), "_").trim('_').ifBlank { "Consumer" }
         printHtmlDocument(context, "NB_Proposal_${format.name}_$slug", html)
@@ -1028,7 +1043,12 @@ object ExportPrintHelper {
         rooftopAfterBitmap: Bitmap? = null,
         inverterBeforeBitmap: Bitmap? = null,
         inverterAfterBitmap: Bitmap? = null,
-        includeOwnerInternalCosting: Boolean = false
+        includeOwnerInternalCosting: Boolean = false,
+        detailedOptions: DetailedProposalOptions = DetailedProposalOptions(
+            capacityKwp = breakdown.capacityKw,
+            baseSystemPriceInr = breakdown.grossQuotedPriceInr,
+            subsidyAmountInr = breakdown.pmSuryaGharSubsidyInr
+        )
     ): String {
         val logoUri = ensureLogoDataUri(context)
         val cleanName = customerName.ifBlank { "Valued Solar Consumer" }
@@ -1170,58 +1190,22 @@ object ExportPrintHelper {
         """.trimIndent()
 
         val bodyHtml = when (format) {
-            ProposalFormat.PM_SURYA_GHAR_2PG -> """
-              <div class="sheet">
-                ${letterheadHtml("PM SURYA GHAR PROPOSAL", "${breakdown.capacityKw} kW RESIDENTIAL", logoUri)}
-                $customerMetaTable
-                <div class="kpi-row">
-                  <div class="kpi-box"><div class="kpi-label">Gross Turnkey Price</div><div class="kpi-val">${formatInr(breakdown.grossQuotedPriceInr)}</div></div>
-                  <div class="kpi-box" style="border-color:#7CB342;background:#F1F8E9;"><div class="kpi-label">Govt. DBT Subsidy</div><div class="kpi-val" style="color:#2B4D12;">- ${formatInr(breakdown.pmSuryaGharSubsidyInr)}</div></div>
-                  <div class="kpi-box" style="border-color:#8E1E1B;background:#FFF8F7;"><div class="kpi-label">Net Cost After Subsidy</div><div class="kpi-val" style="color:#8E1E1B;">${formatInr(breakdown.finalNetCostAfterSubsidyInr)}</div></div>
-                  <div class="kpi-box"><div class="kpi-label">Payback / Generation</div><div class="kpi-val">${breakdown.estimatedPaybackYears} Yrs • ${breakdown.estimatedMonthlyUnits}u/mo</div></div>
-                </div>
-                $photosSection
-                $pricingSummaryTable
-                <table class="grid no-break" style="margin-top:6px;">
-                  <thead>
-                    <tr><th colspan="4">Measured Site Survey &amp; Complete BOS Wiring Included</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td><b>Panels:</b> ${breakdown.wiring.panelCount} × ${dimensions.panelWattageWp}Wp DCR</td>
-                      <td><b>DC Cable:</b> ${breakdown.wiring.dcCableMeters} m (4 sq.mm UV)</td>
-                      <td><b>AC Cable:</b> ${breakdown.wiring.acCableMeters} m (Armoured)</td>
-                      <td><b>3-Pit Earth + Conduit:</b> ${breakdown.wiring.earthingWireMeters}m / ${breakdown.wiring.pvcConduitMeters}m</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div class="sheet page-break" style="margin-top:10px;">
-                ${letterheadHtml("SUBSIDY & WARRANTY", "PAGE 2 OF 2", logoUri)}
-                <table class="grid no-break">
-                  <thead>
-                    <tr><th colspan="4">PM Surya Ghar Central Subsidy &amp; AVVNL Net Metering Roadmap</th></tr>
-                    <tr><th style="width:16%;">Step</th><th style="width:28%;">Milestone</th><th style="width:36%;">Action by NB Engineering &amp; Consumer</th><th style="width:20%;">Timeline</th></tr>
-                  </thead>
-                  <tbody>
-                    <tr><td><b>Step 1</b></td><td>National Portal Registration</td><td>PM Surya Ghar online registration with AVVNL K-Number &amp; Technical Feasibility</td><td>Day 1–3</td></tr>
-                    <tr><td><b>Step 2</b></td><td>HDGI Structure &amp; Array Install</td><td>Made-in-India DCR module installation, inverter mounting, earthing &amp; LA</td><td>Day 4–7</td></tr>
-                    <tr><td><b>Step 3</b></td><td>DISCOM Inspection &amp; Net Meter</td><td>AVVNL Bi-directional Smart Meter installation, Sealing &amp; DCR Upload</td><td>Day 8–18</td></tr>
-                    <tr><td><b>Step 4</b></td><td>Direct Bank Subsidy (DBT)</td><td>${formatInr(breakdown.pmSuryaGharSubsidyInr)} credited directly into Consumer Bank Account</td><td>Within ~30 Days</td></tr>
-                  </tbody>
-                </table>
-                <table class="grid no-break" style="margin-top:6px;">
-                  <thead><tr><th colspan="2">25-Year MNRE DCR Warranty &amp; Financial Returns</th></tr></thead>
-                  <tbody>
-                    <tr><td style="width:55%;"><b>DCR Solar PV Modules:</b> 12-Yr Product + 25-Yr Linear Output Warranty (80%+)<br/><b>Grid-Tie Inverter:</b> 5 to 10-Yr OEM Warranty • <b>HDGI Structure:</b> 25-Yr Anti-Rust</td>
-                        <td style="width:45%;"><b>Annual Est. Generation:</b> ~${breakdown.estimatedMonthlyUnits * 12} Units/Yr<br/><b>Annual Bill Savings:</b> ~${formatInr(breakdown.estimatedMonthlySavingsInr * 12)}/Yr<br/><b>25-Year Net Savings:</b> ~${formatInr(breakdown.estimatedMonthlySavingsInr * 12 * 22)}</td></tr>
-                  </tbody>
-                </table>
-                $internalCostingAppendix
-                ${bankAndTermsFooterHtml()}
-              </div>
-            """.trimIndent()
+            ProposalFormat.PM_SURYA_GHAR_2PG -> buildSevenPageProposal2026Html(
+                logoUri = logoUri,
+                proposalRef = proposalRef,
+                cleanName = cleanName,
+                cleanMob = cleanMob,
+                cleanLoc = cleanLoc,
+                cleanKNo = cleanKNo,
+                breakdown = breakdown,
+                dimensions = dimensions,
+                options = detailedOptions,
+                photosSection = photosSection,
+                rooftopCadSvg = rooftopCadSvg,
+                structureSvg = structureSvg,
+                sldSvg = sldSvg,
+                internalCostingAppendix = internalCostingAppendix
+            )
 
             ProposalFormat.FULL_3D_DOSSIER_4PG -> {
                 val matrixOptions = if (comparisonBreakdowns.isNotEmpty()) comparisonBreakdowns else listOf(breakdown)
@@ -1472,9 +1456,487 @@ object ExportPrintHelper {
         """.trimIndent()
     }
 
+    private fun buildSevenPageProposal2026Html(
+        logoUri: String?,
+        proposalRef: String,
+        cleanName: String,
+        cleanMob: String,
+        cleanLoc: String,
+        cleanKNo: String,
+        breakdown: RealCostingBreakdown,
+        dimensions: SiteSurveyDimensions,
+        options: DetailedProposalOptions,
+        photosSection: String,
+        rooftopCadSvg: String,
+        structureSvg: String,
+        sldSvg: String,
+        internalCostingAppendix: String
+    ): String {
+        val pricing = RealCostingCalculator.computeDetailedProposalSummary(breakdown, options)
+        val capDisplay = if (options.capacityKwp % 1.0 == 0.0) options.capacityKwp.toInt().toString() else options.capacityKwp.toString()
+        val refNo = options.proposalRefNo.ifBlank { proposalRef }
+        val subsidyLabel = if (options.moduleType.isDcrSubsidy) {
+            "National Portal Subsidy (PM Surya Ghar DBT)"
+        } else {
+            "National Portal Subsidy (N/A — Non-DCR Module)"
+        }
+        val subsidyValueDisplay = if (options.moduleType.isDcrSubsidy && pricing.subsidyAmountInr > 0.0) {
+            "- ${formatInr(pricing.subsidyAmountInr, true)}"
+        } else {
+            "₹0 / N/A"
+        }
+        val extraRowsHtml = if (options.extraWorkRows.isEmpty()) {
+            """
+            <tr>
+              <td class="center">2</td>
+              <td>Additional / Extra Work (Load/kVA Difference, Elevated Structure, Net Meter Deposit)</td>
+              <td class="center">As Applicable</td>
+              <td class="num">₹0.00</td>
+            </tr>
+            """.trimIndent()
+        } else {
+            options.extraWorkRows.mapIndexed { idx, row ->
+                """
+                <tr>
+                  <td class="center">${idx + 2}</td>
+                  <td>Extra Work: ${escapeHtml(row.title)}</td>
+                  <td class="center">1 Lot</td>
+                  <td class="num">${formatInr(row.amountInr, true)}</td>
+                </tr>
+                """.trimIndent()
+            }.joinToString("\n")
+        }
+
+        val annualUnits = (options.capacityKwp * 1440.0).roundToInt()
+        val annualSavings = annualUnits * 8.0
+        val twentyFiveYrSavings = annualSavings * 22.0
+        val co2Tonnes = String.format(Locale.US, "%.1f", options.capacityKwp * 1.18 * 25.0)
+
+        return """
+        <!-- PAGE 1: EXECUTIVE COVER & PROJECT SNAPSHOT -->
+        <div class="sheet page-after">
+          ${letterheadHtml("PROJECT PROPOSAL – 2026", "PAGE 1 OF 7 • SITC", logoUri)}
+          <div class="cover-hero" style="background:linear-gradient(135deg,#8E1E1B 0%,#5A110F 100%);color:#FFFFFF;padding:18px 18px;border-bottom:3px solid #7CB342;">
+            <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:#DCEDC8;font-weight:800;">SOLAR EPC TURNKEY PROPOSAL • MNRE &amp; DISCOM COMPLIANT</div>
+            <div style="font-size:20px;font-weight:800;margin-top:5px;">DETAILED SOLAR PROJECT PROPOSAL – 2026 (SITC)</div>
+            <div style="font-size:12px;margin-top:4px;color:#F8FAFC;">
+              Supply, Installation, Testing &amp; Commissioning of <b>$capDisplay KWp ${escapeHtml(breakdown.systemType.label)}</b> Grid-Connected Solar PV Power Plant
+            </div>
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+              <span style="background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.35);padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;">Module Type: ${escapeHtml(options.moduleType.label)}</span>
+              <span style="background:rgba(124,179,66,0.28);border:1px solid #DCEDC8;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;">Panels: ${escapeHtml(options.panelMake)}</span>
+              <span style="background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.35);padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;">Inverter: ${escapeHtml(options.inverterMake)}</span>
+            </div>
+          </div>
+
+          <table class="grid no-break" style="margin-top:8px;">
+            <thead>
+              <tr><th colspan="2">Client &amp; Proposal Identification</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="width:54%;">
+                  <b>Prepared For:</b> ${escapeHtml(cleanName)}<br/>
+                  <b>Site Address:</b> ${escapeHtml(cleanLoc)}<br/>
+                  <b>Contact Mobile:</b> ${escapeHtml(cleanMob)}<br/>
+                  <b>DISCOM / AVVNL K-No.:</b> ${escapeHtml(cleanKNo)}
+                </td>
+                <td style="width:46%;">
+                  <b>Proposal Ref. No.:</b> ${escapeHtml(refNo)}<br/>
+                  <b>Proposal Date:</b> ${todayIsoDate()}<br/>
+                  <b>Offer Validity:</b> ${options.validityDays} Days from Date of Issue<br/>
+                  <b>Mounting Structure:</b> ${escapeHtml(breakdown.structureType.label)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="kpi-row" style="margin-top:8px;">
+            <div class="kpi-box"><div class="kpi-label">Plant Capacity</div><div class="kpi-val">$capDisplay KWp</div></div>
+            <div class="kpi-box"><div class="kpi-label">Base + Extra Work</div><div class="kpi-val">${formatInr(pricing.grossTotalWithExtrasInr)}</div></div>
+            <div class="kpi-box" style="border-color:#7CB342;background:#F1F8E9;"><div class="kpi-label">Portal Subsidy</div><div class="kpi-val" style="color:#2B4D12;">$subsidyValueDisplay</div></div>
+            <div class="kpi-box" style="border-color:#8E1E1B;background:#FFF8F7;"><div class="kpi-label">Net Effective Cost</div><div class="kpi-val" style="color:#8E1E1B;">${formatInr(pricing.netEffectiveCostInr)}</div></div>
+          </div>
+
+          <table class="grid no-break" style="margin-top:8px;">
+            <thead>
+              <tr><th colspan="4">Executive Summary — Performance &amp; Commercial Highlights</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>Module Category</b><br/>${escapeHtml(options.moduleType.label)}</td>
+                <td><b>Approved Panel Make</b><br/>${escapeHtml(options.panelMake)}</td>
+                <td><b>Approved Inverter Make</b><br/>${escapeHtml(options.inverterMake)}</td>
+                <td><b>Est. Generation / Payback</b><br/>~$annualUnits Units/Yr • ~${pricing.paybackYears} Yrs</td>
+              </tr>
+              <tr>
+                <td colspan="4"><b>Payment Terms:</b> ${escapeHtml(options.paymentTerms)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="words-bar" style="margin-top:8px;">
+            <b>Submitted By:</b> $COMPANY_NAME • $COMPANY_ADDRESS<br/>
+            <b>GSTIN:</b> $COMPANY_GSTIN &nbsp;|&nbsp; <b>Tel:</b> $COMPANY_TEL_DISPLAY &nbsp;|&nbsp; <b>Email:</b> $COMPANY_EMAIL
+          </div>
+        </div>
+
+        <!-- PAGE 2: ABOUT NB ENGINEERING, SOLAR ROI & SYSTEM ARCHITECTURE -->
+        <div class="sheet page-after" style="margin-top:10px;">
+          ${letterheadHtml("ABOUT & ARCHITECTURE", "PAGE 2 OF 7 • SITC", logoUri)}
+          <table class="grid no-break">
+            <thead>
+              <tr><th colspan="2">About $COMPANY_NAME</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="width:60%;">
+                  <b>Turnkey Solar &amp; Wind EPC Leader in Rajasthan:</b> Headquartered at Rama Phosphates Ltd. Plant, Shed No. 1, Udaipur - 313001, NB Engineering Works &amp; Electricals delivers engineered rooftop &amp; ground-mounted solar power plants compliant with MNRE, PM Surya Ghar Muft Bijli Yojana, and AVVNL/JVVNL/JDVVNL norms.<br/>
+                  <b>In-House Fabrication &amp; Execution:</b> Dedicated Hot-Dip GI structural fabrication bay, certified electrical engineers, and end-to-end DISCOM net-metering &amp; portal liaison.
+                </td>
+                <td style="width:40%;background:#F8FAFC;">
+                  <b>25-Year Financial &amp; Green Impact</b><br/>
+                  • Annual Solar Yield: <b>~$annualUnits kWh/Yr</b><br/>
+                  • Annual Bill Savings: <b>~${formatInr(annualSavings)}/Yr</b><br/>
+                  • Est. Simple Payback: <b>~${pricing.paybackYears} Years</b><br/>
+                  • 25-Yr Cumulative Savings: <b>~${formatInr(twentyFiveYrSavings)}</b><br/>
+                  • CO₂ Offset (25 Yrs): <b>~$co2Tonnes Tonnes</b>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table class="grid no-break" style="margin-top:8px;">
+            <thead>
+              <tr><th>System Architecture &amp; Single-Line Electrical Schematic (SLD)</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="center svg-box" style="padding:10px;">
+                  $sldSvg
+                  <div style="font-size:10px;color:#334155;margin-top:6px;">
+                    <b>Power Flow:</b> ${breakdown.wiring.panelCount} × ${dimensions.panelWattageWp}Wp (${escapeHtml(options.panelMake)}) → DCDB (Type-II SPD + DC Fuse) → ${escapeHtml(options.inverterMake)} Grid-Tie Inverter ($capDisplay KWp) → ACDB (MCB/MCCB + AC SPD) → Bi-Directional Net Meter → AVVNL Grid + 3-Pit Chemical Earthing &amp; LA.
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table class="grid no-break" style="margin-top:8px;">
+            <thead>
+              <tr><th colspan="4">Key Engineering &amp; Safety Protections Built-In</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>Anti-Islanding</b><br/>Automatic grid disconnect during utility outage per IEEE 1547.</td>
+                <td><b>Surge &amp; Lightning</b><br/>Dual AC/DC Type-II SPD + dedicated roof Lightning Arrester.</td>
+                <td><b>3-Pit Chemical Earthing</b><br/>Separate DC, AC &amp; LA copper-bonded earth pits (&lt; 2 Ohm).</td>
+                <td><b>Smart Monitoring</b><br/>Mobile Wi-Fi / GPRS app for real-time kWh generation tracking.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- PAGE 3: SITE ENGINEERING LAYOUT, 3D STRUCTURE & WIRING QUANTITIES -->
+        <div class="sheet page-after" style="margin-top:10px;">
+          ${letterheadHtml("3D LAYOUT & SURVEY", "PAGE 3 OF 7 • SITC", logoUri)}
+          <table class="grid no-break">
+            <thead>
+              <tr>
+                <th style="width:50%;">Top-Down Rooftop CAD Layout (${dimensions.roofLengthM}m × ${dimensions.roofWidthM}m)</th>
+                <th style="width:50%;">3D Mounting Structure (${escapeHtml(breakdown.structureType.label)})</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="center svg-box">$rooftopCadSvg</td>
+                <td class="center svg-box">
+                  $structureSvg
+                  <div style="font-size:9.5px;color:#334155;margin-top:4px;">
+                    Tilt: ${dimensions.tiltDegrees.roundToInt()}° | Azimuth: ${dimensions.azimuthDegrees.roundToInt()}° | Clearance: ${breakdown.structureType.clearanceMeters}m | HDGI ~${breakdown.wiring.estimatedStructureKg.roundToInt()} kg
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table class="grid no-break" style="margin-top:8px;">
+            <thead>
+              <tr><th colspan="4">Measured Site Survey &amp; Balance of System (BOS) Quantities</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>Total Modules</b><br/>${breakdown.wiring.panelCount} Nos × ${dimensions.panelWattageWp}Wp</td>
+                <td><b>Roof Area vs Required</b><br/>${breakdown.wiring.roofAreaSqM} m² (Req: ${breakdown.wiring.requiredPanelAreaSqM} m²)</td>
+                <td><b>Solar DC Cable (4 sq.mm UV)</b><br/>${breakdown.wiring.dcCableMeters} Meters</td>
+                <td><b>Armoured AC Cable</b><br/>${breakdown.wiring.acCableMeters} Meters</td>
+              </tr>
+              <tr>
+                <td><b>3-Pit Earthing Strip/Wire</b><br/>${breakdown.wiring.earthingWireMeters} Meters</td>
+                <td><b>Heavy UV PVC Conduit</b><br/>${breakdown.wiring.pvcConduitMeters} Meters</td>
+                <td><b>HDGI Steel Structure</b><br/>~${breakdown.wiring.estimatedStructureKg.roundToInt()} kg (IS 2062)</td>
+                <td><b>Site Shading Notes</b><br/>${escapeHtml(dimensions.shadingNotes)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          ${if (photosSection.isNotBlank()) photosSection else """
+          <div class="words-bar no-break" style="margin-top:8px;padding:10px;">
+            <b>Site Survey Inspection:</b> Unobstructed south-oriented roof verified for ${breakdown.wiring.panelCount} solar modules (${escapeHtml(options.panelMake)}) with ${breakdown.structureType.label} mounting and safe inverter wall routing (${dimensions.inverterDistanceM}m run).
+          </div>
+          """}
+        </div>
+
+        <!-- PAGE 4: DETAILED BILL OF MATERIALS (BOM) & TECHNICAL SPECIFICATIONS -->
+        <div class="sheet page-after" style="margin-top:10px;">
+          ${letterheadHtml("TECHNICAL BOM (2026)", "PAGE 4 OF 7 • SITC", logoUri)}
+          <table class="grid no-break">
+            <thead>
+              <tr><th colspan="6">Standard SITC Bill of Materials &amp; Approved Makes (${escapeHtml(options.moduleType.label)})</th></tr>
+              <tr>
+                <th class="center" style="width:6%;">S.N.</th>
+                <th style="width:20%;">Equipment / Item</th>
+                <th style="width:36%;">Technical Specification &amp; Standards</th>
+                <th style="width:18%;">Approved Make</th>
+                <th style="width:10%;">Qty</th>
+                <th style="width:10%;">Warranty</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="center">1</td>
+                <td><b>Solar PV Modules</b></td>
+                <td>${dimensions.panelWattageWp}Wp Mono PERC / TOPCon Half-Cut (${escapeHtml(options.moduleType.label)}), IEC 61215, 61730 &amp; BIS Approved</td>
+                <td><b>${escapeHtml(options.panelMake)}</b></td>
+                <td>${breakdown.wiring.panelCount} Nos</td>
+                <td>12 Yr Prod / 25 Yr Perf</td>
+              </tr>
+              <tr>
+                <td class="center">2</td>
+                <td><b>Solar Inverter</b></td>
+                <td>$capDisplay KWp ${escapeHtml(breakdown.systemType.shortLabel)} MPPT Inverter, IP65 Outdoor, Anti-Islanding, Built-in Wi-Fi Logger</td>
+                <td><b>${escapeHtml(options.inverterMake)}</b></td>
+                <td>1 Set</td>
+                <td>5–10 Yrs OEM</td>
+              </tr>
+              <tr>
+                <td class="center">3</td>
+                <td><b>Mounting Structure</b></td>
+                <td>Hot-Dip Galvanized Iron (HDGI ≥ 80 Micron, IS 2062), Wind-rated 150 km/h, SS-304 Nut-Bolts &amp; Anchor Fasteners (${escapeHtml(breakdown.structureType.shortLabel)})</td>
+                <td>NB Shed-1 / Tata / Jindal</td>
+                <td>1 Lot (~${breakdown.wiring.estimatedStructureKg.roundToInt()} kg)</td>
+                <td>25 Yrs Anti-Rust</td>
+              </tr>
+              <tr>
+                <td class="center">4</td>
+                <td><b>DCDB &amp; DC Cables</b></td>
+                <td>IP65 DC Distribution Box with Type-II DC SPD &amp; Fuse; TUV-approved 4 sq.mm UV-protected Tinned Copper Solar Cable + MC4</td>
+                <td>Polycab / Siechem / Elmex</td>
+                <td>1 Set + ${breakdown.wiring.dcCableMeters}m</td>
+                <td>5 Yrs</td>
+              </tr>
+              <tr>
+                <td class="center">5</td>
+                <td><b>ACDB &amp; AC Cables</b></td>
+                <td>IP65 AC Distribution Box with 4P MCB/MCCB &amp; Type-II AC SPD; Heavy-Duty Armoured Cable &amp; UV PVC Conduit</td>
+                <td>Havells / L&amp;T / Polycab</td>
+                <td>1 Set + ${breakdown.wiring.acCableMeters}m</td>
+                <td>5 Yrs</td>
+              </tr>
+              <tr>
+                <td class="center">6</td>
+                <td><b>Earthing &amp; LA</b></td>
+                <td>3 Nos Chemical Copper-Bonded Earthing Pits with Backfill Compound + 1 No Roof Lightning Arrester &amp; GI/Cu Strip</td>
+                <td>Ashlok / TruePower / ISI</td>
+                <td>3 Pits + 1 LA</td>
+                <td>5 Yrs</td>
+              </tr>
+              <tr>
+                <td class="center">7</td>
+                <td><b>SITC &amp; Net Metering</b></td>
+                <td>Complete Mechanical Erection, Electrical Termination, Testing, Commissioning, DISCOM Feasibility &amp; Portal Liaison</td>
+                <td>NB Engineering Team</td>
+                <td>1 Turnkey Job</td>
+                <td>1 Yr Workmanship</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="words-bar no-break" style="margin-top:8px;">
+            <b>Quality &amp; Compliance Assurance:</b> All supplied modules carry valid serial barcodes &amp; MNRE ALMM / DCR test certificates (where DCR selected) for seamless National Portal verification.
+          </div>
+        </div>
+
+        <!-- PAGE 5: COMMERCIAL PRICE SCHEDULE, EXTRA WORK, SUBSIDY & PAYMENT TERMS -->
+        <div class="sheet page-after" style="margin-top:10px;">
+          ${letterheadHtml("COMMERCIAL OFFER (2026)", "PAGE 5 OF 7 • SITC", logoUri)}
+          <table class="grid no-break">
+            <thead>
+              <tr><th colspan="4">Commercial Price Schedule — $capDisplay KWp (${escapeHtml(options.moduleType.label)})</th></tr>
+              <tr>
+                <th class="center" style="width:7%;">S.N.</th>
+                <th style="width:55%;">Scope of Supply, Installation, Testing &amp; Commissioning (SITC)</th>
+                <th class="center" style="width:15%;">Basis</th>
+                <th class="num" style="width:23%;">Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="center">1</td>
+                <td>
+                  <b>Base Solar System Package ($capDisplay KWp • ${escapeHtml(options.moduleType.label)})</b><br/>
+                  <small style="color:#475569;">Panels: ${escapeHtml(options.panelMake)} | Inverter: ${escapeHtml(options.inverterMake)} | Structure: ${escapeHtml(breakdown.structureType.shortLabel)} | Incl. Standard GST &amp; BOS</small>
+                </td>
+                <td class="center">Turnkey SITC</td>
+                <td class="num"><b>${formatInr(pricing.baseSystemPriceInr, true)}</b></td>
+              </tr>
+              $extraRowsHtml
+              <tr>
+                <td colspan="3" class="num"><b>Gross Total Project Value (Base System + Extra Work, Incl. GST)</b></td>
+                <td class="num dr">${formatInr(pricing.grossTotalWithExtrasInr, true)}</td>
+              </tr>
+              <tr>
+                <td colspan="3" class="num" style="color:#2B4D12;"><b>(-) $subsidyLabel</b></td>
+                <td class="num" style="color:#2B4D12;font-weight:800;">$subsidyValueDisplay</td>
+              </tr>
+              <tr class="grand-row">
+                <td colspan="3" class="num">FINAL EFFECTIVE NET COST TO CUSTOMER</td>
+                <td class="num">${formatInr(pricing.netEffectiveCostInr, true)}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="words-bar no-break">
+            <b>Net Effective Cost (in words):</b> ${escapeHtml(amountInWords(pricing.netEffectiveCostInr))}
+          </div>
+
+          <table class="grid no-break" style="margin-top:8px;">
+            <thead>
+              <tr><th colspan="2">Payment Terms &amp; Release Schedule</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="width:32%;"><b>Agreed Payment Terms</b></td>
+                <td><b>${escapeHtml(options.paymentTerms)}</b></td>
+              </tr>
+              <tr>
+                <td><b>Gross Contract Reference</b></td>
+                <td>Gross Order Value: <b>${formatInr(pricing.grossTotalWithExtrasInr)}</b> (Subsidy of ${subsidyValueDisplay} is credited via DBT directly to Customer's Bank A/C for DCR orders)</td>
+              </tr>
+            </tbody>
+          </table>
+
+          $internalCostingAppendix
+        </div>
+
+        <!-- PAGE 6: EXECUTION TIMELINE, DISCOM WORKFLOW & SCOPE MATRIX -->
+        <div class="sheet page-after" style="margin-top:10px;">
+          ${letterheadHtml("TIMELINE & SCOPE MATRIX", "PAGE 6 OF 7 • SITC", logoUri)}
+          <table class="grid no-break">
+            <thead>
+              <tr><th colspan="4">Project Execution Timeline &amp; PM Surya Ghar / DISCOM Roadmap</th></tr>
+              <tr><th style="width:14%;">Phase</th><th style="width:26%;">Milestone</th><th style="width:42%;">Key Activities</th><th style="width:18%;">Est. Timeline</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><b>Phase 1</b></td><td>Order, Survey &amp; Feasibility</td><td>PO &amp; Advance receipt, final roof measurement, DISCOM / National Portal online application &amp; Technical Feasibility</td><td>Day 1 – Day 3</td></tr>
+              <tr><td><b>Phase 2</b></td><td>Material Dispatch</td><td>Dispatch of ${escapeHtml(options.panelMake)} modules, ${escapeHtml(options.inverterMake)} inverter, HDGI structure &amp; BOS kits from Udaipur depot</td><td>Day 4 – Day 6</td></tr>
+              <tr><td><b>Phase 3</b></td><td>SITC Execution</td><td>Civil anchoring, structure erection, module mounting, DC/AC cabling, ACDB/DCDB, 3-pit earthing &amp; LA commissioning</td><td>Day 7 – Day 10</td></tr>
+              <tr><td><b>Phase 4</b></td><td>DISCOM Inspection &amp; Meter</td><td>CEIG/DISCOM site inspection, Bi-directional Net Meter testing, installation, MCO &amp; DCR certificate upload</td><td>Day 11 – Day 20</td></tr>
+              <tr><td><b>Phase 5</b></td><td>Handover &amp; Subsidy DBT</td><td>App monitoring setup, handover kit &amp; ${if (options.moduleType.isDcrSubsidy) "DBT Subsidy credit into Client Bank A/C" else "Final plant performance sign-off"}</td><td>Day 21 – Day 30</td></tr>
+            </tbody>
+          </table>
+
+          <table class="grid no-break" style="margin-top:8px;">
+            <thead>
+              <tr>
+                <th style="width:50%;">NB Engineering Works Scope (Included)</th>
+                <th style="width:50%;">Client Scope &amp; Pre-Requisites</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  • Complete supply of PV Modules, Inverter, HDGI Structure &amp; BOS<br/>
+                  • Mechanical erection, chemical earthing &amp; lightning arrestor<br/>
+                  • DC/AC electrical wiring, testing &amp; grid synchronization<br/>
+                  • DISCOM / AVVNL net-metering documentation &amp; portal upload
+                </td>
+                <td>
+                  • Unobstructed roof access, safe material storage &amp; electricity/water during installation<br/>
+                  • Latest electricity bill (K-No.), Aadhaar, PAN &amp; cancelled cheque for portal/DBT<br/>
+                  • Stable home/office Wi-Fi range near inverter for online monitoring<br/>
+                  • Statutory DISCOM load enhancement / meter deposit charges if not in Extra Work
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- PAGE 7: COMMERCIAL TERMS & CONDITIONS, BANK DETAILS & ACCEPTANCE -->
+        <div class="sheet" style="margin-top:10px;">
+          ${letterheadHtml("TERMS & ACCEPTANCE", "PAGE 7 OF 7 • SITC", logoUri)}
+          <table class="grid no-break">
+            <thead>
+              <tr><th>Commercial Terms &amp; Conditions (2026 SITC)</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="font-size:10px;line-height:1.45;">
+                  <b>1. Validity:</b> This proposal is valid for <b>${options.validityDays} days</b> from the date of issue. Module/inverter prices are subject to revision if order is delayed beyond validity.<br/>
+                  <b>2. Payment Terms:</b> ${escapeHtml(options.paymentTerms)}. Delayed payments beyond due milestones attract 18% p.a. interest.<br/>
+                  <b>3. Taxes &amp; Duties:</b> Composite Solar GST is included in Base System Price as applicable on date of quotation; any statutory tax change by Govt. of India/Rajasthan shall be to Client's account.<br/>
+                  <b>4. Subsidy Disclaimer:</b> Central subsidy (${subsidyValueDisplay}) under PM Surya Ghar applies strictly to eligible residential <b>DCR</b> installations and is disbursed directly by MNRE/Portal to Consumer Bank A/C per prevailing Govt. rules.<br/>
+                  <b>5. Warranty:</b> PV Modules carry OEM 12-Yr Product &amp; 25-Yr Linear Power Warranty; Inverter carries 5–10 Yr OEM Warranty. Physical damage, grid surge beyond SPD rating, or unauthorized tampering voids warranty.<br/>
+                  <b>6. Civil &amp; Waterproofing:</b> Standard chemical anchor / RCC grouting is included; specialized full-terrace waterproofing treatment, if desired, is in Client scope.<br/>
+                  <b>7. Force Majeure &amp; Jurisdiction:</b> Delays due to DISCOM meter stock, weather, or Force Majeure are excluded from penalty. All disputes are subject to <b>Udaipur (Rajasthan)</b> jurisdiction only.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <table class="grid no-break" style="margin-top:8px;">
+            <thead>
+              <tr><th colspan="2">Company Bank Remittance &amp; Contact Details</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style="width:55%;">
+                  <b>Account Name:</b> $COMPANY_NAME<br/>
+                  <b>Bank &amp; Branch:</b> $BANK_NAME • $BANK_BRANCH<br/>
+                  <b>Account Number:</b> <b>$BANK_ACCOUNT_NO</b> &nbsp;|&nbsp; <b>IFSC:</b> <b>$BANK_IFSC</b>
+                </td>
+                <td style="width:45%;">
+                  <b>GSTIN:</b> $COMPANY_GSTIN<br/>
+                  <b>Tel / WhatsApp:</b> $COMPANY_TEL_DISPLAY<br/>
+                  <b>Email:</b> $COMPANY_EMAIL
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="bottom-split" style="margin-top:8px;">
+            <div class="bank-terms" style="width:50%;">
+              <div class="section-title">Client Order Acceptance</div>
+              <div style="font-size:9.5px;color:#334155;">
+                We accept this 7-Page Detailed Solar Project Proposal (${escapeHtml(refNo)}) for <b>$capDisplay KWp</b> (${escapeHtml(options.moduleType.label)}) at Net Cost <b>${formatInr(pricing.netEffectiveCostInr)}</b>.
+              </div>
+              <div style="margin-top:28px;font-weight:600;border-top:1px solid #94A3B8;padding-top:4px;">
+                Client Signature &amp; Date (${escapeHtml(cleanName)})
+              </div>
+            </div>
+            <div class="sign-box" style="width:50%;">
+              <div style="font-weight:700;color:#0F172A;">For $COMPANY_NAME</div>
+              <div class="stamp-box">NB ENGINEERING WORKS<br/>UDAIPUR - 313001 • VERIFIED</div>
+              <div style="font-weight:600;border-top:1px solid #94A3B8;padding-top:4px;">Authorized Signatory ($COMPANY_TEL_DISPLAY)</div>
+            </div>
+          </div>
+        </div>
+        """.trimIndent()
+    }
+
     /**
-     * Generates a genuine multi-page A4 PDF file in `cacheDir/proposals/` via `android.graphics.pdf.PdfDocument`
-     * and opens the Android Share Sheet (pre-filled for WhatsApp + PDF attachment via FileProvider).
+     * Generates a genuine multi-page A4 PDF file in `cacheDir/exports/` via `android.graphics.pdf.PdfDocument`
+     * for any of the 4 ProposalFormats and launches Android's Share Sheet (WhatsApp / Save PDF).
      */
     fun shareProposalPdfOnWhatsApp(
         context: Context,
@@ -1486,169 +1948,172 @@ object ExportPrintHelper {
         breakdown: RealCostingBreakdown,
         dimensions: SiteSurveyDimensions,
         rooftopAfterBitmap: Bitmap? = null,
-        inverterAfterBitmap: Bitmap? = null
+        inverterAfterBitmap: Bitmap? = null,
+        comparisonBreakdowns: List<RealCostingBreakdown> = emptyList(),
+        rooftopBeforeBitmap: Bitmap? = null,
+        inverterBeforeBitmap: Bitmap? = null,
+        includeOwnerInternalCosting: Boolean = false,
+        detailedOptions: DetailedProposalOptions = DetailedProposalOptions(
+            capacityKwp = breakdown.capacityKw,
+            baseSystemPriceInr = breakdown.grossQuotedPriceInr,
+            subsidyAmountInr = breakdown.pmSuryaGharSubsidyInr
+        )
     ): Result<String> {
         return try {
             val cleanName = customerName.ifBlank { "Valued Solar Consumer" }
-            val slug = cleanName.replace(Regex("[^A-Za-z0-9]+"), "_").trim('_').ifBlank { "Consumer" }
-            val proposalsDir = File(context.cacheDir, "proposals").apply { mkdirs() }
-            val fileName = "NB_Proposal_${slug}_${todayIsoDate()}.pdf"
-            val outFile = File(proposalsDir, fileName)
-
-            val doc = PdfDocument()
-            val pageW = 595
-            val pageH = 842
-            val margin = 28f
-
-            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#8E1E1B")
-                textSize = 15f
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            val slug = sanitizeFileSlug(cleanName, "Consumer")
+            val fileName = "NB_Proposal_${format.name}_${slug}_${todayIsoDate()}.pdf"
+            if (format == ProposalFormat.PM_SURYA_GHAR_2PG) {
+                val pricing = RealCostingCalculator.computeDetailedProposalSummary(breakdown, detailedOptions)
+                val outFile = writeSevenPageProposalPdf(
+                    context = context,
+                    fileName = fileName,
+                    cleanName = cleanName,
+                    customerMobile = customerMobile,
+                    siteLocation = siteLocation,
+                    consumerNo = consumerNo,
+                    breakdown = breakdown,
+                    dimensions = dimensions,
+                    options = detailedOptions,
+                    pricing = pricing,
+                    rooftopBeforeBitmap = rooftopBeforeBitmap,
+                    rooftopAfterBitmap = rooftopAfterBitmap,
+                    inverterBeforeBitmap = inverterBeforeBitmap,
+                    inverterAfterBitmap = inverterAfterBitmap,
+                    includeOwnerInternalCosting = includeOwnerInternalCosting
+                )
+                val waText = buildString {
+                    appendLine("*$COMPANY_NAME — Udaipur*")
+                    appendLine("Detailed 7-Page Solar Project Proposal – 2026 (SITC) for *$cleanName*")
+                    appendLine("System: ${detailedOptions.capacityKwp} KWp (${detailedOptions.moduleType.label})")
+                    appendLine("Panel Make: ${detailedOptions.panelMake} | Inverter: ${detailedOptions.inverterMake}")
+                    appendLine("Gross Project Price: ${formatInr(pricing.grossTotalWithExtrasInr)}")
+                    if (detailedOptions.moduleType.isDcrSubsidy && pricing.subsidyAmountInr > 0) {
+                        appendLine("National Portal Subsidy: - ${formatInr(pricing.subsidyAmountInr)}")
+                    } else {
+                        appendLine("National Portal Subsidy: ₹0 / N/A (Non-DCR)")
+                    }
+                    appendLine("*Net Effective Cost: ${formatInr(pricing.netEffectiveCostInr)}*")
+                    appendLine("Payment Terms: ${detailedOptions.paymentTerms}")
+                    appendLine("Contact: $COMPANY_TEL_DISPLAY | GSTIN: $COMPANY_GSTIN")
+                }
+                sharePdfFile(context, outFile, "Share 7-Page Proposal PDF via WhatsApp", "Solar Project Proposal 2026 - $cleanName ($COMPANY_NAME)", waText)
+                return Result.success(fileName)
             }
-            val darkBold = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#0F172A")
-                textSize = 10.5f
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            }
-            val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#334155")
-                textSize = 9.5f
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-            }
-            val greenBold = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#2B4D12")
-                textSize = 11f
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            }
-            val maroonBig = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.parseColor("#8E1E1B")
-                textSize = 16f
-                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            }
-            val borderPaint = Paint().apply {
-                color = Color.parseColor("#94A3B8")
-                style = Paint.Style.STROKE
-                strokeWidth = 1f
-            }
-            val limeBgPaint = Paint().apply {
-                color = Color.parseColor("#F1F8E9")
-                style = Paint.Style.FILL
-            }
-            val maroonBgPaint = Paint().apply {
-                color = Color.parseColor("#8E1E1B")
-                style = Paint.Style.FILL
+            val pdf = PdfA4Writer(context, format.shortTitle.uppercase(Locale.US), "${breakdown.capacityKw} kW ${breakdown.systemType.shortLabel}")
+
+            pdf.drawMetaBox(
+                listOf(
+                    "Prepared For: $cleanName   |   Mobile: ${customerMobile.ifBlank { "-" }}   |   K-No: ${consumerNo.ifBlank { "-" }}",
+                    "Site: ${siteLocation.ifBlank { "Udaipur, Rajasthan" }}   |   Date: ${todayIsoDate()}   |   Structure: ${breakdown.structureType.label}"
+                )
+            )
+
+            // Prominent "Party Ko Kitne Ka Padega" Highlight Box
+            pdf.drawHighlightBox(
+                heading = "CUSTOMER NET COST SUMMARY ('PARTY KO KITNE KA PADEGA')",
+                subLine = "Gross Price (Incl. GST): ${formatInr(breakdown.grossQuotedPriceInr)}   |   PM Surya Ghar Subsidy: - ${formatInr(breakdown.pmSuryaGharSubsidyInr)}",
+                bigValue = "Final Net Cost After Subsidy: ${formatInr(breakdown.finalNetCostAfterSubsidyInr)}"
+            )
+
+            // Format-specific Comparison Matrix (for Full 3D Dossier & Commercial Tender BOQ)
+            if ((format == ProposalFormat.FULL_3D_DOSSIER_4PG || format == ProposalFormat.COMMERCIAL_TENDER_BOQ) &&
+                comparisonBreakdowns.isNotEmpty()
+            ) {
+                pdf.drawSectionHeading("SYSTEM CAPACITY OPTIONS & SUBSIDY COMPARISON")
+                val cols = listOf(0.18f, 0.20f, 0.22f, 0.20f, 0.20f)
+                pdf.drawTableHeader(listOf("Capacity", "Solar PV", "Gross Price", "Subsidy", "Net Cost"), cols)
+                comparisonBreakdowns.forEach { opt ->
+                    pdf.drawTableRow(
+                        cells = listOf(
+                            "${opt.capacityKw} kW",
+                            "${opt.wiring.panelCount} Panels",
+                            formatInr(opt.grossQuotedPriceInr),
+                            "- ${formatInr(opt.pmSuryaGharSubsidyInr)}",
+                            formatInr(opt.finalNetCostAfterSubsidyInr)
+                        ),
+                        fractions = cols,
+                        boldLast = true
+                    )
+                }
+                pdf.addSpacing(8f)
             }
 
-            // PAGE 1: Official Letterhead, Customer Info, Real Costing & Bank Footer
-            val page1 = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, 1).create())
-            val c1: Canvas = page1.canvas
-            c1.drawColor(Color.WHITE)
-            c1.drawRect(margin, margin, pageW - margin, pageH - margin, borderPaint)
-
-            // Circular NB Logo
-            val logoBmp = runCatching {
-                BitmapFactory.decodeResource(context.resources, R.drawable.nb_solar_icon_fg)
-            }.getOrNull()
-            if (logoBmp != null) {
-                val dst = RectF(margin + 10f, margin + 10f, margin + 52f, margin + 52f)
-                c1.drawBitmap(logoBmp, null, dst, null)
-            }
-
-            c1.drawText(COMPANY_NAME, margin + 62f, margin + 26f, titlePaint)
-            c1.drawText(COMPANY_ADDRESS.take(78), margin + 62f, margin + 40f, bodyPaint)
-            c1.drawText("GSTIN: $COMPANY_GSTIN | Tel: $COMPANY_TEL | $COMPANY_EMAIL", margin + 62f, margin + 52f, darkBold)
-
-            // Maroon header divider + Format badge
-            c1.drawRect(margin, margin + 62f, pageW - margin, margin + 84f, maroonBgPaint)
-            val whiteBold = Paint(darkBold).apply { color = Color.WHITE; textSize = 10.5f }
-            c1.drawText("${format.shortTitle.uppercase(Locale.US)} — ${breakdown.capacityKw} kW ${breakdown.systemType.label}", margin + 10f, margin + 77f, whiteBold)
-
-            var y = margin + 102f
-            c1.drawText("Prepared For: $cleanName   |   Mobile: ${customerMobile.ifBlank { "-" }}   |   K-No: ${consumerNo.ifBlank { "-" }}", margin + 12f, y, darkBold)
-            y += 15f
-            c1.drawText("Site: ${siteLocation.ifBlank { "Udaipur, Rajasthan" }}   |   Date: ${todayIsoDate()}   |   Structure: ${breakdown.structureType.label}", margin + 12f, y, bodyPaint)
-            y += 18f
-
-            // Highlight "Party Ko Kitne Ka Padega" box
-            c1.drawRect(margin + 10f, y, pageW - margin - 10f, y + 76f, limeBgPaint)
-            c1.drawRect(margin + 10f, y, pageW - margin - 10f, y + 76f, borderPaint)
-            c1.drawText("CUSTOMER NET COST SUMMARY ('PARTY KO KITNE KA PADEGA')", margin + 20f, y + 18f, greenBold)
-            c1.drawText("Gross Turnkey Price (Incl. GST): ${formatInr(breakdown.grossQuotedPriceInr)}   |   PM Surya Ghar Subsidy: - ${formatInr(breakdown.pmSuryaGharSubsidyInr)}", margin + 20f, y + 36f, bodyPaint)
-            c1.drawText("Final Net Cost After Subsidy: ${formatInr(breakdown.finalNetCostAfterSubsidyInr)}", margin + 20f, y + 58f, maroonBig)
-            y += 92f
-
-            // Technical BoM & Survey Grid
-            c1.drawText("SURVEY, WIRING & SYSTEM SPECIFICATIONS", margin + 12f, y, titlePaint.apply { textSize = 11f })
-            y += 10f
+            // Survey, Wiring & Technical Specifications Table
+            pdf.drawSectionHeading("SURVEY, WIRING & SYSTEM SPECIFICATIONS")
+            val specCols = listOf(0.32f, 0.68f)
+            pdf.drawTableHeader(listOf("Specification", "Details"), specCols)
             val specRows = listOf(
-                "Solar PV Modules" to "${breakdown.wiring.panelCount} Nos × ${dimensions.panelWattageWp}Wp Made-in-India DCR (25-Yr Warranty)",
+                "Solar PV Modules" to "${breakdown.wiring.panelCount} Nos x ${dimensions.panelWattageWp}Wp Made-in-India DCR (25-Yr Warranty)",
                 "System Architecture" to "${breakdown.capacityKw} kW ${breakdown.systemType.label} (${breakdown.structureType.label})",
-                "Rooftop Dimensions" to "${dimensions.roofLengthM}m × ${dimensions.roofWidthM}m (${breakdown.wiring.roofAreaSqM} m²) | Tilt ${dimensions.tiltDegrees.roundToInt()}°",
+                "Rooftop Dimensions" to "${dimensions.roofLengthM}m x ${dimensions.roofWidthM}m (${breakdown.wiring.roofAreaSqM} m2) | Tilt ${dimensions.tiltDegrees.roundToInt()} deg",
                 "Solar DC Cable (4 sq.mm)" to "${breakdown.wiring.dcCableMeters} meters UV-protected Copper",
                 "AC Cable & PVC Conduit" to "AC Armoured ${breakdown.wiring.acCableMeters} m | Heavy PVC Conduit ${breakdown.wiring.pvcConduitMeters} m",
                 "Earthing & HDGI Structure" to "3-Pit Chemical Earthing ${breakdown.wiring.earthingWireMeters} m | HDGI ~${breakdown.wiring.estimatedStructureKg.roundToInt()} kg",
-                "Est. Generation & Payback" to "~${breakdown.estimatedMonthlyUnits} Units/mo | Savings ~${formatInr(breakdown.estimatedMonthlySavingsInr)}/mo (~${breakdown.estimatedPaybackYears} Yrs)"
+                "Generation & Payback" to "~${breakdown.estimatedMonthlyUnits} Units/mo | Savings ~${formatInr(breakdown.estimatedMonthlySavingsInr)}/mo (~${breakdown.estimatedPaybackYears} Yrs)"
             )
             specRows.forEach { (k, v) ->
-                c1.drawRect(margin + 10f, y, pageW - margin - 10f, y + 22f, borderPaint)
-                c1.drawText(k, margin + 16f, y + 14f, darkBold)
-                c1.drawText(v, margin + 175f, y + 14f, bodyPaint)
-                y += 22f
+                pdf.drawTableRow(listOf(k, v), specCols)
             }
 
-            y += 22f
-            c1.drawText("Amount (in words): ${amountInWords(breakdown.finalNetCostAfterSubsidyInr)}", margin + 12f, y, darkBold)
-
-            // Bank Details Footer
-            val footerY = pageH - margin - 92f
-            c1.drawLine(margin, footerY, pageW - margin, footerY, borderPaint)
-            c1.drawText("Company Bank Details: $BANK_NAME | Branch: $BANK_BRANCH", margin + 12f, footerY + 18f, darkBold)
-            c1.drawText("A/c No.: $BANK_ACCOUNT_NO | IFSC: $BANK_IFSC", margin + 12f, footerY + 33f, bodyPaint)
-            c1.drawText("1. Goods once sold will not be taken back. 2. Subject to Udaipur (Raj.) Jurisdiction. E. & O.E.", margin + 12f, footerY + 50f, bodyPaint)
-            c1.drawText("For $COMPANY_NAME", pageW - margin - 210f, footerY + 72f, darkBold)
-            doc.finishPage(page1)
-
-            // Optional PAGE 2 with AI Rooftop & Inverter Photos
-            if (rooftopAfterBitmap != null || inverterAfterBitmap != null) {
-                val page2 = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, 2).create())
-                val c2 = page2.canvas
-                c2.drawColor(Color.WHITE)
-                c2.drawRect(margin, margin, pageW - margin, pageH - margin, borderPaint)
-                c2.drawText("$COMPANY_NAME — AI SOLAR SITE PLACEMENT", margin + 14f, margin + 26f, titlePaint)
-                var py = margin + 48f
-                rooftopAfterBitmap?.let { bmp ->
-                    c2.drawText("AI Placed Rooftop Array (${breakdown.wiring.panelCount} Panels • ${breakdown.structureType.shortLabel})", margin + 14f, py, darkBold)
-                    py += 10f
-                    val targetW = pageW - margin * 2 - 28f
-                    val aspect = bmp.height.toFloat() / bmp.width.coerceAtLeast(1)
-                    val targetH = (targetW * aspect).coerceAtMost(300f)
-                    c2.drawBitmap(bmp, null, RectF(margin + 14f, py, margin + 14f + targetW, py + targetH), null)
-                    py += targetH + 28f
+            // Tender / Technical Quote Commercial BoQ + Payment Milestones
+            if (format == ProposalFormat.COMMERCIAL_TENDER_BOQ || format == ProposalFormat.PM_SURYA_GHAR_2PG) {
+                pdf.addSpacing(8f)
+                pdf.drawSectionHeading("COMMERCIAL BREAKUP & PAYMENT MILESTONES")
+                val boqCols = listOf(0.46f, 0.18f, 0.16f, 0.20f)
+                pdf.drawTableHeader(listOf("Description", "Taxable", "GST", "Total (INR)"), boqCols)
+                val gstTotal = breakdown.gstAmountInr
+                pdf.drawTableRow(
+                    listOf(
+                        "${breakdown.capacityKw} kW Complete Turnkey Solar EPC",
+                        formatInr(breakdown.taxableQuotedPriceInr),
+                        formatInr(gstTotal),
+                        formatInr(breakdown.grossQuotedPriceInr)
+                    ),
+                    boqCols,
+                    boldLast = true
+                )
+                if (format == ProposalFormat.COMMERCIAL_TENDER_BOQ) {
+                    val grand = breakdown.grossQuotedPriceInr.roundToLong().toDouble()
+                    pdf.drawTableRow(listOf("Milestone 1 (30% Advance PO)", "-", "-", formatInr(grand * 0.30)), boqCols)
+                    pdf.drawTableRow(listOf("Milestone 2 (60% On Dispatch)", "-", "-", formatInr(grand * 0.60)), boqCols)
+                    pdf.drawTableRow(listOf("Milestone 3 (10% Commissioning)", "-", "-", formatInr(grand * 0.10)), boqCols)
                 }
-                inverterAfterBitmap?.let { bmp ->
-                    c2.drawText("AI Placed Inverter, ACDB/DCDB & Conduit Wall", margin + 14f, py, darkBold)
-                    py += 10f
-                    val targetW = pageW - margin * 2 - 28f
-                    val aspect = bmp.height.toFloat() / bmp.width.coerceAtLeast(1)
-                    val targetH = (targetW * aspect).coerceAtMost(300f)
-                    c2.drawBitmap(bmp, null, RectF(margin + 14f, py, margin + 14f + targetW, py + targetH), null)
-                }
-                doc.finishPage(page2)
             }
 
-            FileOutputStream(outFile).use { fos ->
-                doc.writeTo(fos)
+            // Optional Owner Internal Costing Breakdown (Strictly Hidden Unless Enabled by Owner)
+            if (includeOwnerInternalCosting) {
+                pdf.addSpacing(8f)
+                pdf.drawSectionHeading("OWNER INTERNAL EPC REAL COSTING (CONFIDENTIAL)")
+                val costCols = listOf(0.40f, 0.35f, 0.25f)
+                pdf.drawTableHeader(listOf("Cost Head", "Purchase / Qty Basis", "Landing Cost"), costCols)
+                pdf.drawTableRow(listOf("DCR Panels + Inverter + BOS", "${breakdown.wiring.panelCount} Panels + ${breakdown.capacityKw} kW", formatInr(breakdown.totalLandingCostInr)), costCols)
+                pdf.drawTableRow(listOf("Expected Gross Profit Margin", "${String.format(Locale.US, "%.1f", breakdown.profitMarginPct)}% on Taxable", formatInr(breakdown.profitMarginInr)), costCols, boldLast = true)
             }
-            doc.close()
 
-            val pdfUri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                outFile
+            pdf.addSpacing(8f)
+            pdf.drawWordsBar("Amount Chargeable (in words): ${amountInWords(breakdown.finalNetCostAfterSubsidyInr)}")
+            pdf.drawBankAndTermsFooter()
+
+            // Optional Page 2: AI Rooftop & Inverter Placement Photos
+            val photos = listOfNotNull(
+                rooftopBeforeBitmap?.let { "Rooftop Site (Before Solar)" to it },
+                rooftopAfterBitmap?.let { "AI Placed Rooftop Array (${breakdown.wiring.panelCount} Panels • ${breakdown.structureType.shortLabel})" to it },
+                inverterBeforeBitmap?.let { "Inverter Wall (Before)" to it },
+                inverterAfterBitmap?.let { "AI Placed Inverter, ACDB/DCDB & Conduit" to it }
             )
+            if (photos.isNotEmpty()) {
+                pdf.startNewPage("AI SITE PHOTO PLACEMENT — $cleanName")
+                photos.forEach { (caption, bmp) ->
+                    pdf.drawCaptionedBitmap(caption, bmp, maxHeightPt = 260f)
+                }
+                pdf.drawBankAndTermsFooter()
+            }
+
+            val outFile = pdf.writeToExportsFile(fileName)
             val waText = buildString {
                 appendLine("*$COMPANY_NAME — Udaipur*")
-                appendLine("Solar EPC Proposal for *$cleanName* (${breakdown.capacityKw} kW ${breakdown.systemType.shortLabel})")
+                appendLine("Solar EPC Proposal (${format.shortTitle}) for *$cleanName* (${breakdown.capacityKw} kW ${breakdown.systemType.shortLabel})")
                 appendLine("Gross Price (Incl. GST): ${formatInr(breakdown.grossQuotedPriceInr)}")
                 if (breakdown.pmSuryaGharSubsidyInr > 0) {
                     appendLine("PM Surya Ghar Subsidy: - ${formatInr(breakdown.pmSuryaGharSubsidyInr)}")
@@ -1657,18 +2122,1020 @@ object ExportPrintHelper {
                 appendLine("Est. Generation: ~${breakdown.estimatedMonthlyUnits} Units/mo | Payback ~${breakdown.estimatedPaybackYears} Yrs")
                 appendLine("Contact: $COMPANY_TEL | GSTIN: $COMPANY_GSTIN")
             }
-
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/pdf"
-                putExtra(Intent.EXTRA_STREAM, pdfUri)
-                putExtra(Intent.EXTRA_SUBJECT, "Solar EPC Proposal - $cleanName ($COMPANY_NAME)")
-                putExtra(Intent.EXTRA_TEXT, waText)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            context.startActivity(Intent.createChooser(shareIntent, "Share Proposal PDF via WhatsApp"))
+            sharePdfFile(context, outFile, "Share Proposal PDF via WhatsApp", "Solar EPC Proposal - $cleanName ($COMPANY_NAME)", waText)
             Result.success(fileName)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    private fun writeSevenPageProposalPdf(
+        context: Context,
+        fileName: String,
+        cleanName: String,
+        customerMobile: String,
+        siteLocation: String,
+        consumerNo: String,
+        breakdown: RealCostingBreakdown,
+        dimensions: SiteSurveyDimensions,
+        options: DetailedProposalOptions,
+        pricing: com.example.data.model.DetailedProposalPricingSummary,
+        rooftopBeforeBitmap: Bitmap?,
+        rooftopAfterBitmap: Bitmap?,
+        inverterBeforeBitmap: Bitmap?,
+        inverterAfterBitmap: Bitmap?,
+        includeOwnerInternalCosting: Boolean
+    ): File {
+        val capDisplay = if (options.capacityKwp % 1.0 == 0.0) options.capacityKwp.toInt().toString() else options.capacityKwp.toString()
+        val refNo = options.proposalRefNo.ifBlank { "NB-Q/${todayIsoDate().replace("-", "")}/${capDisplay}KW" }
+        val subsidyDisp = if (options.moduleType.isDcrSubsidy && pricing.subsidyAmountInr > 0.0) {
+            "- ${formatInr(pricing.subsidyAmountInr)}"
+        } else {
+            "₹0 / N/A"
+        }
+        val annualUnits = (options.capacityKwp * 1440.0).roundToInt()
+        val annualSavings = annualUnits * 8.0
+
+        val pdf = PdfA4Writer(context, "SOLAR PROJECT PROPOSAL – 2026 (SITC)", "PAGE 1 OF 7")
+
+        // PAGE 1: EXECUTIVE COVER & SNAPSHOT
+        pdf.drawCoverHeroBanner(
+            title = "DETAILED SOLAR PROJECT PROPOSAL – 2026 (SITC)",
+            subtitle = "$capDisplay KWp ${breakdown.systemType.label} Grid-Connected Solar PV Power Plant",
+            chipsLine = "${options.moduleType.label} | Panels: ${options.panelMake} | Inverter: ${options.inverterMake}"
+        )
+        pdf.drawMetaBox(
+            listOf(
+                "Prepared For: $cleanName   |   Mobile: ${customerMobile.ifBlank { "-" }}   |   K-No: ${consumerNo.ifBlank { "-" }}",
+                "Site Address: ${siteLocation.ifBlank { "Udaipur, Rajasthan" }}   |   Ref: $refNo",
+                "Proposal Date: ${todayIsoDate()}   |   Validity: ${options.validityDays} Days   |   Structure: ${breakdown.structureType.label}"
+            )
+        )
+        pdf.drawHighlightBox(
+            heading = "NET EFFECTIVE INVESTMENT SUMMARY (${options.moduleType.shortLabel})",
+            subLine = "Base + Extra Work: ${formatInr(pricing.grossTotalWithExtrasInr)}   |   National Portal Subsidy: $subsidyDisp",
+            bigValue = "Final Net Effective Cost: ${formatInr(pricing.netEffectiveCostInr)}"
+        )
+        val p1Cols = listOf(0.32f, 0.68f)
+        pdf.drawTableHeader(listOf("Parameter", "Project Proposal Snapshot"), p1Cols)
+        pdf.drawTableRow(listOf("Module Type & Panels", "${options.moduleType.label} — ${options.panelMake} (${breakdown.wiring.panelCount} × ${dimensions.panelWattageWp}Wp)"), p1Cols)
+        pdf.drawTableRow(listOf("Inverter & Structure", "${options.inverterMake} ($capDisplay KWp) | ${breakdown.structureType.label}"), p1Cols)
+        pdf.drawTableRow(listOf("Payment Terms", options.paymentTerms), p1Cols)
+        pdf.drawTableRow(listOf("Annual Yield & Payback", "~$annualUnits Units/Yr | Savings ~${formatInr(annualSavings)}/Yr | Payback ~${pricing.paybackYears} Yrs"), p1Cols, boldLast = true)
+
+        // PAGE 2: ABOUT NB ENGINEERING & SYSTEM ARCHITECTURE (SLD)
+        pdf.startNewPage("ABOUT NB ENGINEERING & SYSTEM ARCHITECTURE (PAGE 2 OF 7)", fullLetterhead = true)
+        pdf.drawSectionHeading("ABOUT $COMPANY_NAME")
+        pdf.drawBulletLines(
+            listOf(
+                "Headquartered at Rama Phosphates Ltd. Plant, Shed No. 1, Udaipur - 313001, Rajasthan (GSTIN: $COMPANY_GSTIN).",
+                "Turnkey Solar & Wind EPC specialist for Residential, Commercial & Industrial grid-tied rooftop systems.",
+                "In-house Hot-Dip GI fabrication, certified electrical commissioning & full DISCOM / PM Surya Ghar portal liaison.",
+                "25-Yr Financial Impact: ~$annualUnits kWh/Yr | Annual Savings ~${formatInr(annualSavings)} | 25-Yr Est. Savings ~${formatInr(annualSavings * 22.0)}."
+            )
+        )
+        pdf.drawSectionHeading("SINGLE-LINE ELECTRICAL ARCHITECTURE DIAGRAM (SLD)")
+        pdf.drawSldCanvasDiagram(
+            capacityKwp = options.capacityKwp,
+            panelCount = breakdown.wiring.panelCount,
+            inverterMake = options.inverterMake,
+            earthingMeters = breakdown.wiring.earthingWireMeters
+        )
+        val p2Cols = listOf(0.28f, 0.72f)
+        pdf.drawTableHeader(listOf("Safety Feature", "Engineering Protection Included"), p2Cols)
+        pdf.drawTableRow(listOf("Anti-Islanding", "Automatic grid isolation during DISCOM outage per IEEE 1547 & CEA standards."), p2Cols)
+        pdf.drawTableRow(listOf("Surge & Lightning", "Type-II AC/DC SPDs inside IP65 enclosures + roof Lightning Arrester."), p2Cols)
+        pdf.drawTableRow(listOf("3-Pit Earthing", "Dedicated chemical copper-bonded earth pits for DC, AC & LA (< 2 Ohm)."), p2Cols)
+
+        // PAGE 3: SITE ENGINEERING, WIRING QUANTITIES & AI PHOTOS
+        pdf.startNewPage("SITE LAYOUT, 3D STRUCTURE & WIRING SURVEY (PAGE 3 OF 7)", fullLetterhead = true)
+        pdf.drawSectionHeading("MEASURED ROOFTOP SURVEY & BALANCE OF SYSTEM (BOS)")
+        val p3Cols = listOf(0.36f, 0.64f)
+        pdf.drawTableHeader(listOf("Survey Parameter", "Measured Specification"), p3Cols)
+        pdf.drawTableRow(listOf("Roof Dimensions & Area", "${dimensions.roofLengthM}m × ${dimensions.roofWidthM}m (${breakdown.wiring.roofAreaSqM} m² available vs ${breakdown.wiring.requiredPanelAreaSqM} m² req)"), p3Cols)
+        pdf.drawTableRow(listOf("Mounting Structure", "${breakdown.structureType.label} | Tilt ${dimensions.tiltDegrees.roundToInt()}° | Clearance ${breakdown.structureType.clearanceMeters}m | HDGI ~${breakdown.wiring.estimatedStructureKg.roundToInt()} kg"), p3Cols)
+        pdf.drawTableRow(listOf("Solar DC Cable (4 sq.mm)", "${breakdown.wiring.dcCableMeters} meters UV-protected Tinned Copper"), p3Cols)
+        pdf.drawTableRow(listOf("Armoured AC Cable & Conduit", "AC ${breakdown.wiring.acCableMeters} m | Heavy UV PVC Conduit ${breakdown.wiring.pvcConduitMeters} m"), p3Cols)
+        pdf.drawTableRow(listOf("3-Pit Chemical Earthing", "${breakdown.wiring.earthingWireMeters} m Cu/GI Earthing Strip + Lightning Arrester"), p3Cols)
+        pdf.addSpacing(6f)
+        val photos = listOfNotNull(
+            rooftopAfterBitmap?.let { "AI Placed Rooftop Array (${breakdown.wiring.panelCount} Panels • ${breakdown.structureType.shortLabel})" to it },
+            inverterAfterBitmap?.let { "AI Placed Inverter, ACDB/DCDB & Conduit" to it },
+            rooftopBeforeBitmap?.let { "Rooftop Site (Before Solar)" to it },
+            inverterBeforeBitmap?.let { "Inverter Wall (Before)" to it }
+        ).take(2)
+        if (photos.isNotEmpty()) {
+            photos.forEach { (caption, bmp) ->
+                pdf.drawCaptionedBitmap(caption, bmp, maxHeightPt = 210f)
+            }
+        } else {
+            pdf.drawWordsBar("Site Inspection: ${dimensions.shadingNotes}")
+        }
+
+        // PAGE 4: DETAILED BILL OF MATERIALS (BOM) & TECHNICAL SPECS
+        pdf.startNewPage("DETAILED BILL OF MATERIALS & TECHNICAL SPECS (PAGE 4 OF 7)", fullLetterhead = true)
+        pdf.drawSectionHeading("SITC APPROVED MAKE BILL OF MATERIALS (2026)")
+        val bomCols = listOf(0.08f, 0.24f, 0.34f, 0.20f, 0.14f)
+        pdf.drawTableHeader(listOf("S.N.", "Component", "Specification", "Approved Make", "Warranty"), bomCols)
+        pdf.drawTableRow(listOf("1", "Solar PV Modules", "${breakdown.wiring.panelCount} × ${dimensions.panelWattageWp}Wp (${options.moduleType.shortLabel})", options.panelMake, "12 / 25 Yrs"), bomCols)
+        pdf.drawTableRow(listOf("2", "Solar Inverter", "$capDisplay KWp ${breakdown.systemType.shortLabel} MPPT Wi-Fi", options.inverterMake, "5–10 Yrs"), bomCols)
+        pdf.drawTableRow(listOf("3", "HDGI Structure", "${breakdown.structureType.shortLabel} (~${breakdown.wiring.estimatedStructureKg.roundToInt()} kg, IS 2062)", "NB Shed-1 / Tata", "25 Yrs"), bomCols)
+        pdf.drawTableRow(listOf("4", "DCDB & DC Cable", "Type-II DC SPD + 4 sq.mm (${breakdown.wiring.dcCableMeters}m)", "Polycab / Siechem", "5 Yrs"), bomCols)
+        pdf.drawTableRow(listOf("5", "ACDB & AC Cable", "4P MCB + AC SPD + Armoured (${breakdown.wiring.acCableMeters}m)", "Havells / L&T", "5 Yrs"), bomCols)
+        pdf.drawTableRow(listOf("6", "Earthing & LA", "3 Chemical Earth Pits (${breakdown.wiring.earthingWireMeters}m) + 1 LA", "Ashlok / ISI", "5 Yrs"), bomCols)
+        pdf.drawTableRow(listOf("7", "SITC & Net Meter", "Erection, Commissioning & DISCOM Liaison", "NB Engineering", "1 Yr Work"), bomCols)
+        pdf.addSpacing(8f)
+        pdf.drawWordsBar("All modules supplied with MNRE ALMM / DCR test certificates & serial barcodes where applicable.")
+
+        // PAGE 5: COMMERCIAL PRICE SCHEDULE, EXTRA WORK, SUBSIDY & PAYMENT TERMS
+        pdf.startNewPage("COMMERCIAL PRICE SCHEDULE & PAYMENT TERMS (PAGE 5 OF 7)", fullLetterhead = true)
+        pdf.drawSectionHeading("COMMERCIAL OFFER — $capDisplay KWp (${options.moduleType.label})")
+        val commCols = listOf(0.08f, 0.52f, 0.16f, 0.24f)
+        pdf.drawTableHeader(listOf("S.N.", "Scope / Description", "Basis", "Amount (INR)"), commCols)
+        pdf.drawTableRow(
+            listOf("1", "Base System ($capDisplay KWp ${options.moduleType.shortLabel} • ${options.panelMake} / ${options.inverterMake})", "Turnkey SITC", formatInr(pricing.baseSystemPriceInr, true)),
+            commCols
+        )
+        if (options.extraWorkRows.isEmpty()) {
+            pdf.drawTableRow(listOf("2", "Extra Work (Load/kVA, Elevated Structure, Net Meter Deposit)", "As Applicable", "₹0.00"), commCols)
+        } else {
+            options.extraWorkRows.forEachIndexed { idx, row ->
+                pdf.drawTableRow(listOf("${idx + 2}", "Extra Work: ${row.title}", "1 Lot", formatInr(row.amountInr, true)), commCols)
+            }
+        }
+        pdf.drawTableRow(listOf("", "Gross Project Total (Incl. GST)", "Subtotal", formatInr(pricing.grossTotalWithExtrasInr, true)), commCols, boldLast = true)
+        pdf.drawTableRow(
+            listOf("", if (options.moduleType.isDcrSubsidy) "(-) National Portal Subsidy (DBT)" else "(-) National Portal Subsidy (Non-DCR)", "Govt. DBT", subsidyDisp),
+            commCols
+        )
+        pdf.drawTableRow(listOf("", "FINAL EFFECTIVE NET COST TO CUSTOMER", "Net Total", formatInr(pricing.netEffectiveCostInr, true)), commCols, boldLast = true, highlightRow = true)
+        pdf.addSpacing(6f)
+        pdf.drawWordsBar("In Words: ${amountInWords(pricing.netEffectiveCostInr)}")
+        pdf.drawSectionHeading("PAYMENT TERMS & MILESTONES")
+        pdf.drawMetaBox(listOf("Payment Terms: ${options.paymentTerms}"))
+        if (includeOwnerInternalCosting) {
+            pdf.drawSectionHeading("OWNER CONFIDENTIAL REAL COSTING AUDIT")
+            pdf.drawMetaBox(
+                listOf(
+                    "Landing Cost: ${formatInr(breakdown.totalLandingCostInr)} | Profit Margin (${String.format(Locale.US, "%.1f", breakdown.profitMarginPct)}%): ${formatInr(breakdown.profitMarginInr)}"
+                )
+            )
+        }
+
+        // PAGE 6: EXECUTION TIMELINE & SCOPE RESPONSIBILITY MATRIX
+        pdf.startNewPage("EXECUTION TIMELINE & SCOPE MATRIX (PAGE 6 OF 7)", fullLetterhead = true)
+        pdf.drawSectionHeading("5-PHASE PROJECT EXECUTION TIMELINE")
+        val tCols = listOf(0.14f, 0.26f, 0.42f, 0.18f)
+        pdf.drawTableHeader(listOf("Phase", "Milestone", "Activities", "Timeline"), tCols)
+        pdf.drawTableRow(listOf("Phase 1", "Order & Feasibility", "PO advance, survey & DISCOM portal feasibility", "Day 1 – 3"), tCols)
+        pdf.drawTableRow(listOf("Phase 2", "Material Dispatch", "Dispatch of panels, inverter, HDGI & BOS from Udaipur", "Day 4 – 6"), tCols)
+        pdf.drawTableRow(listOf("Phase 3", "SITC Execution", "Structure erection, cabling, earthing & commissioning", "Day 7 – 10"), tCols)
+        pdf.drawTableRow(listOf("Phase 4", "DISCOM & Net Meter", "Inspection, Bi-directional meter, MCO & DCR upload", "Day 11 – 20"), tCols)
+        pdf.drawTableRow(listOf("Phase 5", "Handover & DBT", "Monitoring app setup & subsidy DBT / sign-off", "Day 21 – 30"), tCols)
+        pdf.addSpacing(8f)
+        pdf.drawSectionHeading("SCOPE RESPONSIBILITY MATRIX")
+        pdf.drawBulletLines(
+            listOf(
+                "NB Engineering Scope: Supply of Modules, Inverter, HDGI Structure, ACDB/DCDB, Cables, 3-Pit Earthing, LA, Erection & Net Metering.",
+                "Client Scope: Roof access, storage space, electricity/water during erection, K-No. bill/KYC/cancelled cheque & Wi-Fi for monitoring."
+            )
+        )
+
+        // PAGE 7: COMMERCIAL TERMS & CONDITIONS, BANK DETAILS & SIGNATURES
+        pdf.startNewPage("COMMERCIAL TERMS, BANK DETAILS & ACCEPTANCE (PAGE 7 OF 7)", fullLetterhead = true)
+        pdf.drawSectionHeading("COMMERCIAL TERMS & CONDITIONS (2026 SITC)")
+        pdf.drawBulletLines(
+            listOf(
+                "1. Offer Validity: Valid for ${options.validityDays} days from issue date; prices subject to revision thereafter.",
+                "2. Payment Terms: ${options.paymentTerms}. Overdue milestone balances attract 18% p.a. interest.",
+                "3. Taxes & Duties: Composite Solar GST included in base price; any statutory rate revision is to Client's account.",
+                "4. Subsidy: Central DBT subsidy ($subsidyDisp) applies only to eligible residential DCR plants per MNRE norms.",
+                "5. Warranty: Modules 12-Yr Product / 25-Yr Power OEM Warranty; Inverter 5–10 Yrs OEM Warranty.",
+                "6. Civil & Waterproofing: Standard chemical anchor grouting included; full-terrace waterproofing in Client scope.",
+                "7. Jurisdiction: Force Majeure / DISCOM delays excluded. Subject to Udaipur (Rajasthan) jurisdiction only."
+            )
+        )
+        pdf.drawDualSignatureFooter(cleanName, refNo, formatInr(pricing.netEffectiveCostInr))
+        return pdf.writeToExportsFile(fileName)
+    }
+
+    /**
+     * Generates a valid A4 Tax Invoice / Voucher `.pdf` file and launches WhatsApp / Android Share Sheet.
+     */
+    fun exportAndShareTaxInvoicePdf(context: Context, voucher: BusyVoucher): Result<String> {
+        if (voucher.type == BusyVoucherType.RECEIPT) {
+            return exportAndSharePaymentReceiptPdf(context, voucher)
+        }
+        return try {
+            val docHeading = when (voucher.type) {
+                BusyVoucherType.SALES -> "TAX INVOICE"
+                BusyVoucherType.PURCHASE -> "PURCHASE VOUCHER"
+                BusyVoucherType.PAYMENT -> "PAYMENT VOUCHER"
+                BusyVoucherType.JOURNAL -> "JOURNAL VOUCHER"
+                BusyVoucherType.CONTRA -> "CONTRA VOUCHER"
+                BusyVoucherType.RECEIPT -> "PAYMENT RECEIPT"
+            }
+            val safeVch = sanitizeFileSlug(voucher.voucherNo, "VCH")
+            val fileName = "NB_${voucher.type.prefix}_$safeVch.pdf"
+            val pdf = PdfA4Writer(context, docHeading, "ORIGINAL FOR RECIPIENT")
+
+            pdf.drawMetaBox(
+                listOf(
+                    "Billed To / Party: ${voucher.partyAccountName}   |   Invoice/Vch No: ${voucher.voucherNo}",
+                    "Party GSTIN: ${voucher.partyGstin.ifBlank { "Unregistered / B2C" }}   |   Date: ${voucher.date}   |   Cost Center: ${voucher.costCenter.label}",
+                    "Contra Ledger: ${voucher.contraAccountName}   |   UTR/Ref: ${voucher.utrOrChequeNo.ifBlank { voucher.billRefNo.ifBlank { "-" } }}"
+                )
+            )
+
+            val cols = listOf(0.07f, 0.37f, 0.14f, 0.10f, 0.08f, 0.11f, 0.13f)
+            pdf.drawTableHeader(listOf("S.N.", "Description", "HSN/SAC", "Qty", "Unit", "Rate", "Amount"), cols)
+            if (voucher.lineItems.isEmpty()) {
+                pdf.drawTableRow(
+                    listOf(
+                        "1",
+                        voucher.narration.ifBlank { "Solar / Wind EPC Supply & Services" },
+                        "85414300",
+                        "1.00",
+                        "Job",
+                        formatInr(voucher.taxableAmount, true),
+                        formatInr(voucher.taxableAmount, true)
+                    ),
+                    cols,
+                    boldLast = true
+                )
+            } else {
+                voucher.lineItems.forEachIndexed { idx, item ->
+                    pdf.drawTableRow(
+                        listOf(
+                            "${idx + 1}",
+                            item.itemName,
+                            item.hsnCode.ifBlank { "85414300" },
+                            String.format(Locale.US, "%.2f", item.quantity),
+                            item.unit,
+                            formatInr(item.rate, true),
+                            formatInr(item.taxableAmount, true)
+                        ),
+                        cols
+                    )
+                }
+            }
+
+            val taxable = voucher.taxableAmount.coerceAtLeast(0.0)
+            val roundedTotal = voucher.totalAmount.roundToLong().toDouble()
+            val roundOff = roundedTotal - voucher.totalAmount
+            pdf.addSpacing(6f)
+            val taxCols = listOf(0.70f, 0.30f)
+            pdf.drawTableRow(listOf("Taxable Value", formatInr(taxable, true)), taxCols)
+            if (voucher.cgstAmount > 0 || voucher.sgstAmount > 0) {
+                pdf.drawTableRow(listOf("Add: CGST", formatInr(voucher.cgstAmount, true)), taxCols)
+                pdf.drawTableRow(listOf("Add: SGST", formatInr(voucher.sgstAmount, true)), taxCols)
+            }
+            if (voucher.igstAmount > 0) {
+                pdf.drawTableRow(listOf("Add: IGST", formatInr(voucher.igstAmount, true)), taxCols)
+            } else if (abs(roundOff) > 0.005) {
+                pdf.drawTableRow(listOf("Round Off (+/-)", String.format(Locale.US, "%+.2f", roundOff)), taxCols)
+            }
+            pdf.drawTableRow(listOf("GRAND TOTAL", formatInr(roundedTotal, true)), taxCols, boldLast = true, highlightRow = true)
+
+            pdf.addSpacing(8f)
+            pdf.drawWordsBar("Amount Chargeable (in words): ${amountInWords(roundedTotal)}")
+            pdf.drawBankAndTermsFooter()
+
+            val outFile = pdf.writeToExportsFile(fileName)
+            val msg = "*$COMPANY_NAME*\n$docHeading #${voucher.voucherNo} (${voucher.date})\nParty: ${voucher.partyAccountName}\nTotal: ${formatInr(roundedTotal, true)}"
+            sharePdfFile(context, outFile, "Share $docHeading PDF", "$docHeading ${voucher.voucherNo} - $COMPANY_NAME", msg)
+            Result.success(fileName)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Generates a valid A4 Payment Receipt `.pdf` file and launches WhatsApp / Android Share Sheet.
+     */
+    fun exportAndSharePaymentReceiptPdf(context: Context, voucher: BusyVoucher): Result<String> {
+        return try {
+            val safeVch = sanitizeFileSlug(voucher.voucherNo, "RCPT")
+            val fileName = "NB_Receipt_$safeVch.pdf"
+            val pdf = PdfA4Writer(context, "PAYMENT RECEIPT", "OFFICIAL ACKNOWLEDGEMENT")
+
+            pdf.drawMetaBox(
+                listOf(
+                    "Receipt No: ${voucher.voucherNo}   |   Receipt Date: ${voucher.date}",
+                    "Received From: ${voucher.partyAccountName}   |   Credited To: ${voucher.contraAccountName}",
+                    "Mode / UTR / Cheque: ${voucher.utrOrChequeNo.ifBlank { "Cash / UPI" }}   |   Paid By: ${voucher.paidBy.ifBlank { voucher.partyAccountName }}"
+                )
+            )
+
+            val cols = listOf(0.08f, 0.67f, 0.25f)
+            pdf.drawTableHeader(listOf("S.N.", "Particulars", "Received (INR)"), cols)
+            pdf.drawTableRow(
+                listOf(
+                    "1",
+                    "Received from ${voucher.partyAccountName} towards Solar / Wind EPC. ${voucher.narration}".trim(),
+                    formatInr(voucher.totalAmount, true)
+                ),
+                cols
+            )
+            pdf.drawTableRow(listOf("", "TOTAL RECEIVED", formatInr(voucher.totalAmount, true)), cols, boldLast = true, highlightRow = true)
+
+            pdf.addSpacing(8f)
+            pdf.drawWordsBar("Sum of Rupees (in words): ${amountInWords(voucher.totalAmount)}")
+            pdf.drawBankAndTermsFooter()
+
+            val outFile = pdf.writeToExportsFile(fileName)
+            val msg = "*$COMPANY_NAME*\nPayment Receipt #${voucher.voucherNo} (${voucher.date})\nReceived From: ${voucher.partyAccountName}\nAmount: ${formatInr(voucher.totalAmount, true)}\nMode/UTR: ${voucher.utrOrChequeNo.ifBlank { "Cash / Online" }}"
+            sharePdfFile(context, outFile, "Share Payment Receipt PDF", "Payment Receipt ${voucher.voucherNo} - $COMPANY_NAME", msg)
+            Result.success(fileName)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Generates a valid A4 Delivery Challan `.pdf` file and launches WhatsApp / Android Share Sheet.
+     */
+    fun exportAndShareDeliveryChallanPdf(
+        context: Context,
+        partyName: String,
+        partyAddress: String,
+        partyPhone: String,
+        challanNo: String,
+        date: String,
+        items: List<BusyLineItem>,
+        remarks: String = ""
+    ): Result<String> {
+        return try {
+            val fileName = "NB_Challan_${sanitizeFileSlug(challanNo, "DC")}.pdf"
+            val pdf = PdfA4Writer(context, "DELIVERY CHALLAN", "SITE DISPATCH COPY")
+
+            pdf.drawMetaBox(
+                listOf(
+                    "Consignee / Party: $partyName   |   Challan No: $challanNo",
+                    "Site Address: ${partyAddress.ifBlank { "Udaipur, Rajasthan" }}   |   Mobile: ${partyPhone.ifBlank { "-" }}",
+                    "Dispatch Date: $date   |   Transport: Company Site Dispatch"
+                )
+            )
+
+            val cols = listOf(0.08f, 0.50f, 0.18f, 0.12f, 0.12f)
+            pdf.drawTableHeader(listOf("S.N.", "Description of Goods", "HSN/SAC", "Qty.", "Unit"), cols)
+            if (items.isEmpty()) {
+                pdf.drawTableRow(listOf("-", "No material items listed for dispatch yet.", "-", "0.00", "-"), cols)
+            } else {
+                items.forEachIndexed { idx, itm ->
+                    pdf.drawTableRow(
+                        listOf(
+                            "${idx + 1}",
+                            itm.itemName,
+                            itm.hsnCode.ifBlank { "85414300" },
+                            String.format(Locale.US, "%.2f", itm.quantity),
+                            itm.unit
+                        ),
+                        cols
+                    )
+                }
+            }
+            val totalQty = items.sumOf { it.quantity }
+            pdf.drawTableRow(
+                listOf("", "TOTAL DISPATCHED QUANTITY", "", String.format(Locale.US, "%.2f", totalQty), "Units"),
+                cols,
+                boldLast = true,
+                highlightRow = true
+            )
+
+            pdf.addSpacing(8f)
+            pdf.drawWordsBar("Dispatch Remarks: ${remarks.ifBlank { "Material dispatched in good condition for Solar / Wind EPC installation." }}")
+            pdf.drawBankAndTermsFooter(receiverLine = "Receiver's Signature & Date: ________________________")
+
+            val outFile = pdf.writeToExportsFile(fileName)
+            val msg = "*$COMPANY_NAME*\nDelivery Challan #$challanNo ($date)\nParty: $partyName\nItems: ${items.size} | Total Qty: ${String.format(Locale.US, "%.2f", totalQty)}"
+            sharePdfFile(context, outFile, "Share Delivery Challan PDF", "Delivery Challan $challanNo - $partyName", msg)
+            Result.success(fileName)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun exportAndSharePartyHardwareChallanPdf(
+        context: Context,
+        party: PartyProject,
+        allocatedPanels: List<DcrPanel>,
+        allocatedMeters: List<SolarMeter>,
+        rawMaterials: List<RawMaterial>
+    ): Result<String> {
+        val lineItems = buildPartyChallanItems(party, allocatedPanels, allocatedMeters, rawMaterials)
+        val challanNo = "DC-${party.partyName.take(4).uppercase(Locale.US).replace(" ", "")}-${todayIsoDate().replace("-", "")}"
+        return exportAndShareDeliveryChallanPdf(
+            context = context,
+            partyName = party.partyName,
+            partyAddress = party.cityOrLocation.ifBlank { party.address },
+            partyPhone = party.mobile,
+            challanNo = challanNo,
+            date = todayIsoDate(),
+            items = lineItems,
+            remarks = "Capacity: ${party.capacityKw} kW (${party.division.label}) | K-No: ${party.consumerNumber.ifBlank { "-" }}"
+        )
+    }
+
+    /**
+     * Generates a valid A4 MNRE DCR Certificate `.pdf` file and launches WhatsApp / Android Share Sheet.
+     */
+    fun exportAndShareDcrCertificatePdf(
+        context: Context,
+        party: PartyProject,
+        allocatedPanels: List<DcrPanel>
+    ): Result<String> {
+        return try {
+            val fileName = "DCR_Certificate_${sanitizeFileSlug(party.partyName, "Party")}_${todayIsoDate()}.pdf"
+            val pdf = PdfA4Writer(context, "DCR UNDERTAKING", "MNRE PM SURYA GHAR")
+            val totalWp = allocatedPanels.sumOf { it.wattage }
+
+            pdf.drawMetaBox(
+                listOf(
+                    "Consumer / Party: ${party.partyName}   |   AVVNL K-No: ${party.consumerNumber.ifBlank { "-" }}",
+                    "Site Location: ${party.cityOrLocation.ifBlank { party.address }}   |   Mobile: ${party.mobile.ifBlank { "-" }}",
+                    "Capacity: ${party.capacityKw} kW (${party.roofStructureType.label})   |   Date: ${todayIsoDate()}"
+                )
+            )
+            pdf.drawWordsBar("Allocated Made-in-India DCR PV Modules: ${allocatedPanels.size} Modules   |   Total Capacity: $totalWp Wp")
+            pdf.addSpacing(6f)
+
+            val cols = listOf(0.08f, 0.36f, 0.22f, 0.14f, 0.20f)
+            pdf.drawTableHeader(listOf("S.N.", "Module Serial No.", "OEM Make", "Wattage", "Invoice Ref"), cols)
+            if (allocatedPanels.isEmpty()) {
+                pdf.drawTableRow(listOf("-", "No DCR panel serial numbers allocated yet.", "-", "-", "-"), cols)
+            } else {
+                allocatedPanels.forEachIndexed { idx, p ->
+                    pdf.drawTableRow(
+                        listOf("${idx + 1}", p.serialNumber, p.brand, "${p.wattage} Wp", p.purchaseInvoiceNo.ifBlank { "-" }),
+                        cols
+                    )
+                }
+            }
+
+            pdf.addSpacing(8f)
+            pdf.drawWordsBar("Self-Declaration: All PV modules listed above are manufactured in India complying with MNRE DCR norms.")
+            pdf.drawBankAndTermsFooter()
+
+            val outFile = pdf.writeToExportsFile(fileName)
+            val msg = "*$COMPANY_NAME*\nMNRE DCR Certificate for *${party.partyName}* (${party.capacityKw} kW)\nAllocated Panels: ${allocatedPanels.size} ($totalWp Wp)"
+            sharePdfFile(context, outFile, "Share DCR Certificate PDF", "DCR Certificate - ${party.partyName}", msg)
+            Result.success(fileName)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Generates a valid A4 Day-by-Day Financial Register `.pdf` file and launches Android Share Sheet.
+     */
+    fun exportAndShareDayByDayReportPdf(
+        context: Context,
+        rows: List<DayByDayFinancialRow>
+    ): Result<String> {
+        return try {
+            val fileName = "NB_DayByDay_Report_${todayIsoDate()}.pdf"
+            val pdf = PdfA4Writer(context, "DAY-BY-DAY REPORT", "DAILY CASH FLOW REGISTER")
+
+            pdf.drawMetaBox(
+                listOf(
+                    "Company: $COMPANY_NAME   |   Generated: ${todayIsoDate()}",
+                    "Active Days: ${rows.size}   |   Total Sales: ${formatInr(rows.sumOf { it.salesBilled })}   |   Total Receipts: ${formatInr(rows.sumOf { it.receiptsCollected })}"
+                )
+            )
+
+            val cols = listOf(0.16f, 0.08f, 0.19f, 0.19f, 0.19f, 0.19f)
+            pdf.drawTableHeader(listOf("Date", "Txns", "Sales", "Receipts", "Pay / Exp", "Net Cash"), cols)
+            if (rows.isEmpty()) {
+                pdf.drawTableRow(listOf("-", "0", "0", "0", "0", "0"), cols)
+            } else {
+                rows.forEach { d ->
+                    pdf.drawTableRow(
+                        listOf(
+                            d.date,
+                            "${d.voucherCount}",
+                            formatInr(d.salesBilled),
+                            formatInr(d.receiptsCollected),
+                            formatInr(d.paymentsAndKharcha),
+                            formatInr(d.netCashFlow)
+                        ),
+                        cols,
+                        boldLast = true
+                    )
+                }
+                pdf.drawTableRow(
+                    listOf(
+                        "TOTAL",
+                        "${rows.sumOf { it.voucherCount }}",
+                        formatInr(rows.sumOf { it.salesBilled }),
+                        formatInr(rows.sumOf { it.receiptsCollected }),
+                        formatInr(rows.sumOf { it.paymentsAndKharcha }),
+                        formatInr(rows.sumOf { it.netCashFlow })
+                    ),
+                    cols,
+                    boldLast = true,
+                    highlightRow = true
+                )
+            }
+            pdf.addSpacing(8f)
+            pdf.drawBankAndTermsFooter()
+
+            val outFile = pdf.writeToExportsFile(fileName)
+            val msg = "*$COMPANY_NAME*\nDay-by-Day Financial Report (${todayIsoDate()})\nNet Cash Flow: ${formatInr(rows.sumOf { it.netCashFlow })}"
+            sharePdfFile(context, outFile, "Share Day-by-Day Report PDF", "NB Day-by-Day Report - ${todayIsoDate()}", msg)
+            Result.success(fileName)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Generates a valid A4 Party Costing & Profit Report `.pdf` file and launches Android Share Sheet.
+     */
+    fun exportAndSharePartyCostingReportPdf(
+        context: Context,
+        row: PartyCostingRow,
+        allocatedPanels: List<DcrPanel>,
+        allocatedMeters: List<SolarMeter>
+    ): Result<String> {
+        return try {
+            val party = row.party
+            val fileName = "NB_Costing_${sanitizeFileSlug(party.partyName, "Party")}_${todayIsoDate()}.pdf"
+            val pdf = PdfA4Writer(context, "PARTY COSTING REPORT", "PROFITABILITY AUDIT")
+
+            pdf.drawMetaBox(
+                listOf(
+                    "Party: ${party.partyName}   |   Division: ${party.division.label} • ${party.leadSource.label}",
+                    "System: ${party.capacityKw} kW (${party.roofStructureType.label})   |   Location: ${party.cityOrLocation.ifBlank { party.address }}",
+                    "Received / Pending: ${formatInr(party.receivedAmount)} / ${formatInr(party.pendingAmount)}   |   Date: ${todayIsoDate()}"
+                )
+            )
+
+            val cols = listOf(0.08f, 0.67f, 0.25f)
+            pdf.drawTableHeader(listOf("S.N.", "Costing & Revenue Particulars", "Amount (INR)"), cols)
+            pdf.drawTableRow(listOf("1", "Gross Contract Deal Value (${party.capacityKw} kW)", formatInr(row.dealValue, true)), cols)
+            pdf.drawTableRow(listOf("2", "(-) Main Hardware (${allocatedPanels.size} Panels, ${allocatedMeters.size} Meters, BOS)", "- ${formatInr(row.mainMaterialCost, true)}"), cols)
+            pdf.drawTableRow(listOf("3", "(-) On-Site Local Material Purchases (${party.sitePurchases.size} Bills)", "- ${formatInr(row.onSitePurchaseCost, true)}"), cols)
+            pdf.drawTableRow(listOf("4", "(-) Daily Site Kharcha & Labour", "- ${formatInr(row.dailyKharchaCost, true)}"), cols)
+            pdf.drawTableRow(listOf("5", "(-) Partner / Referral Commission (${String.format(Locale.US, "%.1f", party.partnerCommissionPct)}%)", "- ${formatInr(row.referralCommission, true)}"), cols)
+            pdf.drawTableRow(
+                listOf("", "NET PARTY PROFIT (${String.format(Locale.US, "%.1f", row.marginPct)}% Margin)", formatInr(row.netProfit, true)),
+                cols,
+                boldLast = true,
+                highlightRow = true
+            )
+
+            pdf.addSpacing(8f)
+            pdf.drawWordsBar("Net Profit (in words): ${amountInWords(abs(row.netProfit))}${if (row.netProfit < 0) " (Net Deficit)" else ""}")
+            pdf.drawBankAndTermsFooter()
+
+            val outFile = pdf.writeToExportsFile(fileName)
+            val msg = "*$COMPANY_NAME*\nParty Costing Report: *${party.partyName}*\nDeal: ${formatInr(row.dealValue)} | Net Profit: ${formatInr(row.netProfit)} (${String.format(Locale.US, "%.1f", row.marginPct)}%)"
+            sharePdfFile(context, outFile, "Share Party Costing PDF", "Party Costing - ${party.partyName}", msg)
+            Result.success(fileName)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Generates a valid A4 BUSY 21 Account Ledger Statement `.pdf` file and launches Android Share Sheet.
+     */
+    fun exportAndShareAccountLedgerPdf(
+        context: Context,
+        account: BusyAccount,
+        fromDate: String,
+        toDate: String,
+        rows: List<LedgerPrintRow>,
+        closingBalance: Double
+    ): Result<String> {
+        return try {
+            val fileName = "NB_Ledger_${sanitizeFileSlug(account.name, "Account")}_${todayIsoDate()}.pdf"
+            val pdf = PdfA4Writer(context, "ACCOUNT LEDGER", "BUSY 21 STATEMENT")
+
+            pdf.drawMetaBox(
+                listOf(
+                    "Account: ${account.name} (${account.group.label})",
+                    "Period: $fromDate to $toDate   |   Opening: ${formatBusyDrCr(account.openingBalance).first}"
+                )
+            )
+
+            val cols = listOf(0.14f, 0.14f, 0.28f, 0.14f, 0.14f, 0.16f)
+            pdf.drawTableHeader(listOf("Date", "Vch No", "Particulars", "Debit (Dr)", "Credit (Cr)", "Balance"), cols)
+            rows.forEach { r ->
+                val (balTxt, _) = formatBusyDrCr(r.runningBalance)
+                pdf.drawTableRow(
+                    listOf(
+                        r.date,
+                        r.voucherNo,
+                        r.particulars,
+                        if (r.debit > 0) formatInr(r.debit, true) else "-",
+                        if (r.credit > 0) formatInr(r.credit, true) else "-",
+                        balTxt
+                    ),
+                    cols
+                )
+            }
+            pdf.drawTableRow(
+                listOf("", "", "CLOSING BALANCE", "", "", formatBusyDrCr(closingBalance).first),
+                cols,
+                boldLast = true,
+                highlightRow = true
+            )
+
+            pdf.addSpacing(8f)
+            pdf.drawBankAndTermsFooter()
+
+            val outFile = pdf.writeToExportsFile(fileName)
+            val msg = "*$COMPANY_NAME*\nAccount Ledger: *${account.name}*\nClosing Balance: ${formatBusyDrCr(closingBalance).first}"
+            sharePdfFile(context, outFile, "Share Account Ledger PDF", "Account Ledger - ${account.name}", msg)
+            Result.success(fileName)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun buildPartyChallanItems(
+        party: PartyProject,
+        allocatedPanels: List<DcrPanel>,
+        allocatedMeters: List<SolarMeter>,
+        rawMaterials: List<RawMaterial>
+    ): List<BusyLineItem> = buildList {
+        if (allocatedPanels.isNotEmpty()) {
+            val serialPreview = allocatedPanels.joinToString(", ") { it.serialNumber }
+            add(
+                BusyLineItem(
+                    itemName = "${allocatedPanels.first().brand} ${allocatedPanels.first().wattage}W DCR Solar Panels (S/N: $serialPreview)",
+                    hsnCode = "85414300",
+                    quantity = allocatedPanels.size.toDouble(),
+                    unit = "Nos"
+                )
+            )
+        }
+        allocatedMeters.forEach { m ->
+            add(
+                BusyLineItem(
+                    itemName = "${m.meterType.label} - ${m.makeAndPhase} (S/N: ${m.serialNumber})",
+                    hsnCode = "90283010",
+                    quantity = 1.0,
+                    unit = "Nos"
+                )
+            )
+        }
+        rawMaterials.forEach { rm ->
+            val issuedQty = rm.issueLogs.filter { it.partyId == party.id }.sumOf { it.quantity }
+            if (issuedQty > 0.0) {
+                val hsn = if (rm.category.contains("Structure", ignoreCase = true)) "73089090" else "85444999"
+                add(
+                    BusyLineItem(
+                        itemName = "${rm.name} (${rm.category})",
+                        hsnCode = hsn,
+                        quantity = issuedQty,
+                        unit = rm.unit
+                    )
+                )
+            }
+        }
+    }
+
+    private fun sanitizeFileSlug(raw: String, fallback: String): String =
+        raw.replace(Regex("[^A-Za-z0-9]+"), "_").trim('_').ifBlank { fallback }
+
+    private fun sharePdfFile(
+        context: Context,
+        pdfFile: File,
+        chooserTitle: String,
+        subject: String,
+        bodyText: String
+    ) {
+        val pdfUri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            pdfFile
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, pdfUri)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            putExtra(Intent.EXTRA_TEXT, bodyText)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, chooserTitle))
+    }
+
+    /**
+     * Reusable paginated A4 (`595 x 842 pt`) native Android PdfDocument canvas builder.
+     */
+    private class PdfA4Writer(
+        private val context: Context,
+        private val docTitle: String,
+        private val subTag: String
+    ) {
+        private val pageW = 595
+        private val pageH = 842
+        private val margin = 26f
+        private val contentW = pageW - margin * 2f
+
+        private val doc = PdfDocument()
+        private var pageNumber = 0
+        private var currentPage: PdfDocument.Page? = null
+        private var canvas: Canvas = Canvas()
+        private var y = margin
+
+        private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#8E1E1B")
+            textSize = 14f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        private val sectionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#8E1E1B")
+            textSize = 10.5f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        private val darkBold = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#0F172A")
+            textSize = 9.5f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#334155")
+            textSize = 9f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        }
+        private val greenBold = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#2B4D12")
+            textSize = 10.5f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        private val maroonBig = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#8E1E1B")
+            textSize = 15f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        private val whiteBold = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 10f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        private val borderPaint = Paint().apply {
+            color = Color.parseColor("#94A3B8")
+            style = Paint.Style.STROKE
+            strokeWidth = 0.9f
+        }
+        private val limeBgPaint = Paint().apply {
+            color = Color.parseColor("#F1F8E9")
+            style = Paint.Style.FILL
+        }
+        private val slateBgPaint = Paint().apply {
+            color = Color.parseColor("#F1F5F9")
+            style = Paint.Style.FILL
+        }
+        private val maroonBgPaint = Paint().apply {
+            color = Color.parseColor("#8E1E1B")
+            style = Paint.Style.FILL
+        }
+
+        private val logoBmp: Bitmap? by lazy {
+            runCatching {
+                BitmapFactory.decodeResource(context.resources, R.drawable.nb_solar_icon_fg)
+            }.getOrNull()
+        }
+
+        init {
+            startNewPage("$docTitle — $subTag", fullLetterhead = true)
+        }
+
+        fun startNewPage(bannerText: String, fullLetterhead: Boolean = false) {
+            currentPage?.let { doc.finishPage(it) }
+            pageNumber++
+            val page = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, pageNumber).create())
+            currentPage = page
+            canvas = page.canvas
+            canvas.drawColor(Color.WHITE)
+            canvas.drawRect(margin, margin, pageW - margin, pageH - margin, borderPaint)
+
+            if (fullLetterhead) {
+                logoBmp?.let { bmp ->
+                    canvas.drawBitmap(bmp, null, RectF(margin + 10f, margin + 8f, margin + 50f, margin + 48f), null)
+                }
+                canvas.drawText(COMPANY_NAME, margin + 60f, margin + 23f, titlePaint)
+                canvas.drawText(fitText(COMPANY_ADDRESS, bodyPaint, contentW - 72f), margin + 60f, margin + 36f, bodyPaint)
+                canvas.drawText("GSTIN: $COMPANY_GSTIN | Tel: $COMPANY_TEL_DISPLAY | $COMPANY_EMAIL", margin + 60f, margin + 48f, darkBold)
+
+                canvas.drawRect(margin, margin + 56f, pageW - margin, margin + 78f, maroonBgPaint)
+                canvas.drawText(fitText(bannerText, whiteBold, contentW - 20f), margin + 10f, margin + 71f, whiteBold)
+                y = margin + 90f
+            } else {
+                canvas.drawRect(margin, margin, pageW - margin, margin + 24f, maroonBgPaint)
+                canvas.drawText(fitText("$COMPANY_NAME • $bannerText (Pg $pageNumber)", whiteBold, contentW - 20f), margin + 10f, margin + 16f, whiteBold)
+                y = margin + 38f
+            }
+        }
+
+        private fun ensureSpace(neededPt: Float) {
+            if (y + neededPt > pageH - margin - 24f) {
+                startNewPage("$docTitle (Continued)", fullLetterhead = false)
+            }
+        }
+
+        fun addSpacing(pt: Float) {
+            y += pt
+        }
+
+        fun drawMetaBox(lines: List<String>) {
+            val h = lines.size * 15f + 10f
+            ensureSpace(h)
+            canvas.drawRect(margin + 8f, y, pageW - margin - 8f, y + h, slateBgPaint)
+            canvas.drawRect(margin + 8f, y, pageW - margin - 8f, y + h, borderPaint)
+            lines.forEachIndexed { idx, line ->
+                canvas.drawText(fitText(line, darkBold, contentW - 28f), margin + 14f, y + 15f + idx * 15f, darkBold)
+            }
+            y += h + 8f
+        }
+
+        fun drawHighlightBox(heading: String, subLine: String, bigValue: String) {
+            ensureSpace(78f)
+            canvas.drawRect(margin + 8f, y, pageW - margin - 8f, y + 70f, limeBgPaint)
+            canvas.drawRect(margin + 8f, y, pageW - margin - 8f, y + 70f, borderPaint)
+            canvas.drawText(fitText(heading, greenBold, contentW - 28f), margin + 16f, y + 18f, greenBold)
+            canvas.drawText(fitText(subLine, bodyPaint, contentW - 28f), margin + 16f, y + 34f, bodyPaint)
+            canvas.drawText(fitText(bigValue, maroonBig, contentW - 28f), margin + 16f, y + 55f, maroonBig)
+            y += 78f
+        }
+
+        fun drawSectionHeading(title: String) {
+            ensureSpace(22f)
+            canvas.drawText(fitText(title, sectionPaint, contentW - 20f), margin + 8f, y + 10f, sectionPaint)
+            y += 16f
+        }
+
+        fun drawTableHeader(headers: List<String>, fractions: List<Float>) {
+            ensureSpace(24f)
+            val usableW = contentW - 16f
+            var x = margin + 8f
+            canvas.drawRect(x, y, x + usableW, y + 20f, slateBgPaint)
+            canvas.drawRect(x, y, x + usableW, y + 20f, borderPaint)
+            headers.forEachIndexed { idx, label ->
+                val cw = usableW * fractions.getOrElse(idx) { 1f / headers.size }
+                canvas.drawRect(x, y, x + cw, y + 20f, borderPaint)
+                canvas.drawText(fitText(label, darkBold, cw - 8f), x + 4f, y + 13.5f, darkBold)
+                x += cw
+            }
+            y += 20f
+        }
+
+        fun drawTableRow(
+            cells: List<String>,
+            fractions: List<Float>,
+            boldLast: Boolean = false,
+            highlightRow: Boolean = false
+        ) {
+            val rowH = 20f
+            ensureSpace(rowH + 4f)
+            val usableW = contentW - 16f
+            var x = margin + 8f
+            if (highlightRow) {
+                canvas.drawRect(x, y, x + usableW, y + rowH, limeBgPaint)
+            }
+            cells.forEachIndexed { idx, text ->
+                val cw = usableW * fractions.getOrElse(idx) { 1f / cells.size }
+                canvas.drawRect(x, y, x + cw, y + rowH, borderPaint)
+                val p = if (highlightRow || (boldLast && idx == cells.lastIndex)) darkBold else bodyPaint
+                canvas.drawText(fitText(text, p, cw - 8f), x + 4f, y + 13.5f, p)
+                x += cw
+            }
+            y += rowH
+        }
+
+        fun drawWordsBar(text: String) {
+            ensureSpace(26f)
+            canvas.drawRect(margin + 8f, y, pageW - margin - 8f, y + 22f, slateBgPaint)
+            canvas.drawRect(margin + 8f, y, pageW - margin - 8f, y + 22f, borderPaint)
+            canvas.drawText(fitText(text, darkBold, contentW - 26f), margin + 14f, y + 14.5f, darkBold)
+            y += 28f
+        }
+
+        fun drawCaptionedBitmap(caption: String, bmp: Bitmap, maxHeightPt: Float = 260f) {
+            val targetW = contentW - 20f
+            val aspect = bmp.height.toFloat() / bmp.width.coerceAtLeast(1)
+            val targetH = (targetW * aspect).coerceAtMost(maxHeightPt)
+            ensureSpace(targetH + 34f)
+            canvas.drawText(fitText(caption, darkBold, targetW), margin + 10f, y + 12f, darkBold)
+            y += 18f
+            canvas.drawBitmap(bmp, null, RectF(margin + 10f, y, margin + 10f + targetW, y + targetH), null)
+            canvas.drawRect(margin + 10f, y, margin + 10f + targetW, y + targetH, borderPaint)
+            y += targetH + 14f
+        }
+
+        fun drawBankAndTermsFooter(receiverLine: String? = null) {
+            ensureSpace(88f)
+            val fy = maxOf(y + 8f, pageH - margin - 84f)
+            canvas.drawLine(margin, fy, pageW - margin, fy, borderPaint)
+            canvas.drawText("Bank: $BANK_NAME | Branch: $BANK_BRANCH", margin + 10f, fy + 16f, darkBold)
+            canvas.drawText("A/c No.: $BANK_ACCOUNT_NO | IFSC: $BANK_IFSC", margin + 10f, fy + 30f, bodyPaint)
+            val terms = receiverLine ?: "1. Goods once sold will not be taken back. 2. Subject to Udaipur (Raj.) Jurisdiction. E. & O.E."
+            canvas.drawText(fitText(terms, bodyPaint, contentW - 180f), margin + 10f, fy + 46f, bodyPaint)
+            canvas.drawText("For $COMPANY_NAME", pageW - margin - 210f, fy + 66f, darkBold)
+            y = fy + 76f
+        }
+
+        fun drawDualSignatureFooter(clientName: String, refNo: String, netCostLabel: String) {
+            ensureSpace(125f)
+            val fy = maxOf(y + 8f, pageH - margin - 120f)
+            canvas.drawLine(margin, fy, pageW - margin, fy, borderPaint)
+            canvas.drawText("Bank: $BANK_NAME | Branch: $BANK_BRANCH | A/c: $BANK_ACCOUNT_NO | IFSC: $BANK_IFSC", margin + 10f, fy + 16f, darkBold)
+            canvas.drawText("GSTIN: $COMPANY_GSTIN | Tel: $COMPANY_TEL_DISPLAY | Email: $COMPANY_EMAIL", margin + 10f, fy + 30f, bodyPaint)
+            val midX = margin + contentW * 0.5f
+            canvas.drawLine(midX, fy + 38f, midX, pageH - margin - 6f, borderPaint)
+            canvas.drawText(fitText("Client Acceptance ($refNo | $netCostLabel)", darkBold, contentW * 0.48f), margin + 10f, fy + 52f, darkBold)
+            canvas.drawText(fitText("Signature & Date: $clientName", bodyPaint, contentW * 0.48f), margin + 10f, fy + 98f, bodyPaint)
+            canvas.drawText("For $COMPANY_NAME", midX + 12f, fy + 52f, darkBold)
+            canvas.drawText("Authorized Signatory (Udaipur - 313001)", midX + 12f, fy + 98f, bodyPaint)
+            y = fy + 110f
+        }
+
+        fun drawCoverHeroBanner(title: String, subtitle: String, chipsLine: String) {
+            ensureSpace(88f)
+            canvas.drawRect(margin + 8f, y, pageW - margin - 8f, y + 78f, maroonBgPaint)
+            val bigWhite = Paint(whiteBold).apply { textSize = 13.5f }
+            val subWhite = Paint(whiteBold).apply { textSize = 9.5f }
+            canvas.drawText(fitText(title, bigWhite, contentW - 28f), margin + 16f, y + 24f, bigWhite)
+            canvas.drawText(fitText(subtitle, subWhite, contentW - 28f), margin + 16f, y + 44f, subWhite)
+            canvas.drawText(fitText(chipsLine, subWhite, contentW - 28f), margin + 16f, y + 63f, subWhite)
+            y += 88f
+        }
+
+        fun drawSldCanvasDiagram(capacityKwp: Double, panelCount: Int, inverterMake: String, earthingMeters: Double) {
+            ensureSpace(112f)
+            val boxLeft = margin + 8f
+            val boxRight = pageW - margin - 8f
+            canvas.drawRect(boxLeft, y, boxRight, y + 100f, slateBgPaint)
+            canvas.drawRect(boxLeft, y, boxRight, y + 100f, borderPaint)
+
+            val w = boxRight - boxLeft
+            val blocks = listOf(
+                "PV ARRAY" to "$panelCount Panels",
+                "DCDB" to "SPD + Fuse",
+                "INVERTER" to "$capacityKwp KWp",
+                "ACDB + NET" to "AVVNL Grid"
+            )
+            val bw = 96f
+            val gap = (w - 24f - bw * 4f) / 3f
+            var bx = boxLeft + 12f
+            val by = y + 20f
+            blocks.forEachIndexed { idx, (head, sub) ->
+                canvas.drawRect(bx, by, bx + bw, by + 44f, limeBgPaint)
+                canvas.drawRect(bx, by, bx + bw, by + 44f, borderPaint)
+                canvas.drawText(fitText(head, darkBold, bw - 8f), bx + 6f, by + 18f, darkBold)
+                canvas.drawText(fitText(sub, bodyPaint, bw - 8f), bx + 6f, by + 34f, bodyPaint)
+                if (idx < blocks.lastIndex) {
+                    canvas.drawLine(bx + bw, by + 22f, bx + bw + gap, by + 22f, borderPaint)
+                }
+                bx += bw + gap
+            }
+            canvas.drawText(
+                fitText("Inverter: $inverterMake  |  3-Pit Chemical Earthing (${earthingMeters}m) + Roof Lightning Arrester", greenBold, w - 20f),
+                boxLeft + 12f,
+                y + 84f,
+                greenBold
+            )
+            y += 108f
+        }
+
+        fun drawBulletLines(lines: List<String>) {
+            lines.forEach { line ->
+                ensureSpace(16f)
+                canvas.drawText(fitText("• $line", bodyPaint, contentW - 24f), margin + 12f, y + 11f, bodyPaint)
+                y += 15f
+            }
+            y += 4f
+        }
+
+        fun writeToExportsFile(fileName: String): File {
+            currentPage?.let {
+                doc.finishPage(it)
+                currentPage = null
+            }
+            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            val outFile = File(exportDir, fileName)
+            try {
+                FileOutputStream(outFile).use { fos ->
+                    doc.writeTo(fos)
+                }
+            } finally {
+                doc.close()
+            }
+            return outFile
+        }
+
+        private fun fitText(raw: String, paint: Paint, maxWidth: Float): String {
+            if (raw.isEmpty() || paint.measureText(raw) <= maxWidth) return raw
+            val ellipsis = "…"
+            var end = raw.length
+            while (end > 1 && paint.measureText(raw.substring(0, end) + ellipsis) > maxWidth) {
+                end--
+            }
+            return raw.substring(0, end) + ellipsis
         }
     }
 
@@ -1838,6 +3305,110 @@ object ExportPrintHelper {
             }
         }
         webView.loadDataWithBaseURL(null, html, "text/HTML", "UTF-8", null)
+    }
+
+    /**
+     * Writes and shares the sample Bulk Loan Parties CSV template via FileProvider.
+     */
+    fun exportSampleLoanPartiesCsv(context: Context): Result<File> {
+        return try {
+            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            val file = File(exportDir, "NB_Loan_Parties_Sample.csv")
+            file.writeText(com.example.data.BulkLoanImporter.buildSampleLoanPartiesCsv(), Charsets.UTF_8)
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "NB Solar Bulk Loan Parties CSV Template")
+                putExtra(Intent.EXTRA_TEXT, "NB Engineering Works — Sample CSV Template for Bulk Loan Parties Import.")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Save or Share Sample Loan Parties CSV"))
+            Result.success(file)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Saves and shares Full Company Backup (.json) via FileProvider for Owner recovery/archival.
+     */
+    fun exportAndShareFullBackupJson(context: Context, jsonContent: String, dateStamp: String): Result<File> {
+        return exportAndShareBytes(
+            context = context,
+            fileName = "NB_Solar_Wind_Full_Backup_$dateStamp.json",
+            mimeType = "application/json",
+            bytes = jsonContent.toByteArray(Charsets.UTF_8),
+            subject = "NB Engineering Works Full Company Backup ($dateStamp)",
+            bodyText = "Full NB Solar & Wind ERP backup JSON (Parties, Leads, Inventory, Challans, Receipts, Loans/MCO, BUSY 21).",
+            chooserTitle = "Save or Share Full Company Backup (.json)"
+        )
+    }
+
+    /**
+     * Saves and shares Master Multi-Sheet Excel Workbook (.xlsx) via FileProvider.
+     */
+    fun exportAndShareMasterExcelXlsx(context: Context, xlsxBytes: ByteArray, dateStamp: String): Result<File> {
+        return exportAndShareBytes(
+            context = context,
+            fileName = "NB_Solar_Wind_Master_Workbook_$dateStamp.xlsx",
+            mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            bytes = xlsxBytes,
+            subject = "NB Engineering Works Master Excel Workbook ($dateStamp)",
+            bodyText = "NB Engineering Works Master Workbook (.xlsx) — Parties, Loans/MCO, Inventory & Challans, BUSY 21 Vouchers, Commissions.",
+            chooserTitle = "Open or Share Master Excel Workbook (.xlsx)"
+        )
+    }
+
+    /**
+     * Saves and shares Master Summary CSV via FileProvider.
+     */
+    fun exportAndShareMasterSummaryCsv(context: Context, csvContent: String, dateStamp: String): Result<File> {
+        return exportAndShareBytes(
+            context = context,
+            fileName = "NB_Solar_Wind_Master_Data_$dateStamp.csv",
+            mimeType = "text/csv",
+            bytes = csvContent.toByteArray(Charsets.UTF_8),
+            subject = "NB Engineering Works Master CSV ($dateStamp)",
+            bodyText = "NB Engineering Works Master Summary CSV Export.",
+            chooserTitle = "Save or Share Master CSV"
+        )
+    }
+
+    private fun exportAndShareBytes(
+        context: Context,
+        fileName: String,
+        mimeType: String,
+        bytes: ByteArray,
+        subject: String,
+        bodyText: String,
+        chooserTitle: String
+    ): Result<File> {
+        return try {
+            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            val file = File(exportDir, fileName)
+            file.writeBytes(bytes)
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = mimeType
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, subject)
+                putExtra(Intent.EXTRA_TEXT, bodyText)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, chooserTitle))
+            Result.success(file)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     private fun csvEscape(raw: String): String {

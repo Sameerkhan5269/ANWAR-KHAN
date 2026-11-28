@@ -27,13 +27,17 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.SolarPower
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -44,11 +48,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -62,8 +68,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.core.RolePermissions
 import com.example.core.formatInr
+import com.example.data.BackupRestoreEngine
 import com.example.data.model.LeadSource
 import com.example.data.model.LeadStatus
+import com.example.data.model.LoanReminderItem
+import com.example.data.model.LoanReminderRule
 import com.example.data.model.ParsedLekhaJokhaLine
 import com.example.data.model.ParsedWhatsAppUpdate
 import com.example.data.model.PartyProject
@@ -109,13 +118,20 @@ fun PipelineScreen(
         loan2: Double,
         subsidy: Double,
         partnerPct: Double,
-        division: ProjectDivision
+        division: ProjectDivision,
+        txnId: String
     ) -> Unit,
     onDeleteParty: (String) -> Unit,
     onPreviewWhatsApp: (String) -> ParsedWhatsAppUpdate,
-    onApplyWhatsApp: (ParsedWhatsAppUpdate, String?) -> Unit,
+    onApplyWhatsApp: (ParsedWhatsAppUpdate, String?, String) -> Unit,
     onPreviewLekhaJokha: (String) -> List<ParsedLekhaJokhaLine>,
-    onApplyLekhaJokha: (List<ParsedLekhaJokhaLine>) -> Unit
+    onApplyLekhaJokha: (List<ParsedLekhaJokhaLine>, String) -> Unit,
+    canBulkImportLoanParties: Boolean = false,
+    canViewReminders: Boolean = false,
+    reminders: List<LoanReminderItem> = emptyList(),
+    onOpenBulkLoanImporter: () -> Unit = {},
+    onOpenRemindersDrawer: () -> Unit = {},
+    onTickMcoOk: (String) -> Unit = {}
 ) {
     val canSeeMoney = RolePermissions.canViewFinancials(role)
     val canSwitchDivision = RolePermissions.canSwitchDivision(role)
@@ -141,6 +157,13 @@ fun PipelineScreen(
                 p.currentStageTitle.lowercase().contains(q)
             matchesSource && matchesDivision && matchesQuery
         }
+    }
+
+    var visibleLimit by remember(selectedSource, selectedDivision, searchQuery) {
+        mutableIntStateOf(BackupRestoreEngine.DEFAULT_PAGE_SIZE)
+    }
+    val pagedParties = remember(filteredParties, visibleLimit) {
+        BackupRestoreEngine.paginateSlice(filteredParties, visibleLimit)
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -304,6 +327,85 @@ fun PipelineScreen(
                             }
                         }
                     }
+
+                    // Solar Pipeline Top Action Bar: Bulk Import Loan Parties & Live Reminders Drawer
+                    val showBulkImportBtn = canBulkImportLoanParties && selectedDivision != ProjectDivision.WIND
+                    if (showBulkImportBtn || canViewReminders) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (showBulkImportBtn) {
+                                Surface(
+                                    onClick = onOpenBulkLoanImporter,
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = solarColors.navyHeader,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("bulk_import_loan_parties_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.UploadFile,
+                                            contentDescription = "Bulk Import Loan Parties",
+                                            tint = Color(0xFFFDE68A),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = "Bulk Import Loans",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (canViewReminders) {
+                                val urgentCount = reminders.count { it.isUrgent }
+                                val bellBg = if (urgentCount > 0) Color(0xFFB91C1C) else solarColors.solarAmber
+                                Surface(
+                                    onClick = onOpenRemindersDrawer,
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = bellBg,
+                                    modifier = Modifier
+                                        .weight(if (showBulkImportBtn) 0.9f else 1f)
+                                        .height(48.dp)
+                                        .testTag("live_reminders_drawer_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.NotificationsActive,
+                                            contentDescription = "Live Action and Payment Reminders",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = "Summary (${reminders.size})",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -365,7 +467,7 @@ fun PipelineScreen(
                     }
                 }
             } else {
-                items(filteredParties, key = { it.id }) { party ->
+                items(pagedParties, key = { it.id }) { party ->
                     PartyPipelineCard(
                         party = party,
                         showMoney = canSeeMoney,
@@ -373,6 +475,42 @@ fun PipelineScreen(
                         onClick = { onOpenParty(party.id) },
                         onDelete = { onDeleteParty(party.id) }
                     )
+                }
+
+                item {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, solarColors.hairlineBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Showing ${pagedParties.size} of ${filteredParties.size} parties",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (pagedParties.size < filteredParties.size) {
+                                val remaining = filteredParties.size - pagedParties.size
+                                OutlinedButton(
+                                    onClick = { visibleLimit += BackupRestoreEngine.DEFAULT_PAGE_SIZE },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("pipeline_load_more_btn")
+                                ) {
+                                    Text(
+                                        text = "Load More (25 per page) • $remaining remaining",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -404,10 +542,10 @@ fun PipelineScreen(
             canSetPartnerSplit = RolePermissions.canViewPartnerSplits(role),
             initialDivision = selectedDivision ?: ProjectDivision.SOLAR,
             onDismiss = { showNewPartyDialog = false },
-            onSave = { name, mob, addr, city, kno, kw, src, refName, refPhone, leadDate, roofType, rate, followUp, surveyNotes, leadSt, valInr, l1, l2, sub, pct, div ->
+            onSave = { name, mob, addr, city, kno, kw, src, refName, refPhone, leadDate, roofType, rate, followUp, surveyNotes, leadSt, valInr, l1, l2, sub, pct, div, txnId ->
                 onCreateParty(
                     name, mob, addr, city, kno, kw, src, refName, refPhone, leadDate,
-                    roofType, rate, followUp, surveyNotes, leadSt, valInr, l1, l2, sub, pct, div
+                    roofType, rate, followUp, surveyNotes, leadSt, valInr, l1, l2, sub, pct, div, txnId
                 )
                 showNewPartyDialog = false
             }
@@ -418,8 +556,8 @@ fun PipelineScreen(
         WhatsAppParserDialog(
             parties = parties,
             onPreview = onPreviewWhatsApp,
-            onApply = { parsed, partyId ->
-                onApplyWhatsApp(parsed, partyId)
+            onApply = { parsed, partyId, txnId ->
+                onApplyWhatsApp(parsed, partyId, txnId)
                 showWhatsAppDialog = false
             },
             onDismiss = { showWhatsAppDialog = false }
@@ -429,8 +567,8 @@ fun PipelineScreen(
     if (showLekhaJokhaDialog) {
         LekhaJokhaBulkDialog(
             onPreview = onPreviewLekhaJokha,
-            onApply = { lines ->
-                onApplyLekhaJokha(lines)
+            onApply = { lines, txnId ->
+                onApplyLekhaJokha(lines, txnId)
                 showLekhaJokhaDialog = false
             },
             onDismiss = { showLekhaJokhaDialog = false }

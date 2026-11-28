@@ -132,8 +132,9 @@ fun PartyDetailScreen(
         quotedRatePerKw: Double,
         dealValue: Double,
         subsidyAmount: Double,
-        surveyNotes: String
-    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _ -> },
+        surveyNotes: String,
+        txnId: String
+    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _, _ -> },
     onShowMessage: (String) -> Unit,
     onBack: () -> Unit,
     onToggleStage: (String) -> Unit,
@@ -162,7 +163,8 @@ fun PartyDetailScreen(
         vendorName: String,
         amount: Double,
         paymentSource: SitePurchasePaymentSource,
-        billPhotoUri: Uri?
+        billPhotoUri: Uri?,
+        txnId: String
     ) -> Unit
 ) {
     BackHandler { onBack() }
@@ -496,16 +498,27 @@ fun PartyDetailScreen(
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(
                                     onClick = {
-                                        ExportPrintHelper.printDcrCertificatePdf(context, party, allocatedPanels)
+                                        val res = ExportPrintHelper.exportAndShareDcrCertificatePdf(context, party, allocatedPanels)
+                                        if (res.isFailure) {
+                                            onShowMessage("DCR PDF share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                        }
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
                                     modifier = Modifier
                                         .weight(1f)
                                         .testTag("generate_dcr_pdf_btn")
                                 ) {
-                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("Generate DCR PDF")
+                                    Text("Share DCR PDF")
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        ExportPrintHelper.printDcrCertificatePdf(context, party, allocatedPanels)
+                                    },
+                                    modifier = Modifier.testTag("print_dcr_pdf_btn")
+                                ) {
+                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = "Print DCR PDF", modifier = Modifier.size(18.dp))
                                 }
                                 OutlinedButton(
                                     onClick = {
@@ -610,23 +623,48 @@ fun PartyDetailScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Allocated DCR Panels (${allocatedPanels.size})", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                    OutlinedButton(
-                                        onClick = {
-                                            ExportPrintHelper.printPartyHardwareChallanA4(
-                                                context,
-                                                party,
-                                                allocatedPanels,
-                                                allocatedMeters,
-                                                rawMaterials
-                                            )
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                        modifier = Modifier.testTag("party_delivery_challan_pdf_btn")
-                                    ) {
-                                        Icon(Icons.Filled.LocalShipping, contentDescription = "Delivery Challan PDF", modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Delivery Challan PDF", style = MaterialTheme.typography.labelSmall)
+                                    Text(
+                                        "Allocated DCR Panels (${allocatedPanels.size})",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Button(
+                                            onClick = {
+                                                val res = ExportPrintHelper.exportAndSharePartyHardwareChallanPdf(
+                                                    context,
+                                                    party,
+                                                    allocatedPanels,
+                                                    allocatedMeters,
+                                                    rawMaterials
+                                                )
+                                                if (res.isFailure) {
+                                                    onShowMessage("Challan share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            modifier = Modifier.testTag("party_delivery_challan_pdf_btn")
+                                        ) {
+                                            Icon(Icons.Filled.Share, contentDescription = "Share Challan PDF", modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Share Challan", style = MaterialTheme.typography.labelSmall)
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                ExportPrintHelper.printPartyHardwareChallanA4(
+                                                    context,
+                                                    party,
+                                                    allocatedPanels,
+                                                    allocatedMeters,
+                                                    rawMaterials
+                                                )
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(Icons.Filled.LocalShipping, contentDescription = "Print Delivery Challan", modifier = Modifier.size(16.dp))
+                                        }
                                     }
                                 }
                                 Spacer(Modifier.height(6.dp))

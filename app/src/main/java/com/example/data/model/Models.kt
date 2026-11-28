@@ -206,10 +206,18 @@ data class PartyProject(
     val leadStatus: LeadStatus = LeadStatus.NEW_ENQUIRY,
     val projectValue: Double = 0.0,
     val receivedAmount: Double = 0.0,
+    val sanctionedLoanAmount: Double = 0.0,
     val loan1Amount: Double = 0.0,
     val loan1Received: Boolean = false,
+    val loan1Date: String = "",
     val loan2Amount: Double = 0.0,
     val loan2Received: Boolean = false,
+    val loan2Date: String = "",
+    val installationDoneDate: String = "",
+    val rsebFileApplied: Boolean = false,
+    val mcoOk: Boolean = false,
+    val meterInstalled: Boolean = false,
+    val subsidyReceived: Boolean = false,
     val subsidyAmount: Double = 0.0,
     val partnerCommissionPct: Double = 0.0,
     val referralPaid: Boolean = false,
@@ -227,6 +235,28 @@ data class PartyProject(
     val totalOnSitePurchases: Double get() = sitePurchases.sumOf { it.amount }
     val currentStageTitle: String
         get() = stages.firstOrNull { !it.completed }?.title ?: "Account Closed"
+
+    val isRsebFileApplied: Boolean
+        get() = rsebFileApplied || stages.firstOrNull { it.id == "LEAD_FILE_3" }?.completed == true
+
+    val isLoan1Done: Boolean
+        get() = loan1Received || stages.firstOrNull { it.id == "LOAN_2" }?.completed == true
+
+    val isLoan2Done: Boolean
+        get() = loan2Received || stages.firstOrNull { it.id == "LOAN_3" }?.completed == true
+
+    val isInstallationDone: Boolean
+        get() = installationDoneDate.isNotBlank() ||
+            stages.firstOrNull { it.id == "INSTALLATION_3" }?.completed == true
+
+    val isMeterInstalled: Boolean
+        get() = meterInstalled || stages.firstOrNull { it.id == "NET_METERING_2" }?.completed == true
+
+    val isMcoOk: Boolean
+        get() = mcoOk || stages.firstOrNull { it.id == "NET_METERING_3" }?.completed == true
+
+    val isSubsidyReceived: Boolean
+        get() = subsidyReceived || stages.firstOrNull { it.id == "SUBSIDY_CLOSE_2" }?.completed == true
 }
 
 fun defaultWorkflowStages(): List<WorkflowStage> = WorkflowSection.entries.flatMap { section ->
@@ -538,6 +568,82 @@ data class ParsedLekhaJokhaLine(
     val amount: Double
 )
 
+// --- BULK LOAN PARTIES IMPORTER & 5-RULE AUTOMATED REMINDER MODELS ---
+
+data class BulkLoanPartyRow(
+    val id: String = UUID.randomUUID().toString(),
+    val partyName: String = "",
+    val mobile: String = "",
+    val siteCity: String = "",
+    val capacityKw: Double = 3.0,
+    val referrerName: String = "",
+    val commissionPct: Double = 0.0,
+    val totalContractInr: Double = 0.0,
+    val sanctionedLoanInr: Double = 0.0,
+    val loan1Amount: Double = 0.0,
+    val loan1Done: Boolean = false,
+    val loan1Date: String = "",
+    val loan2Amount: Double = 0.0,
+    val loan2Done: Boolean = false,
+    val loan2Date: String = "",
+    val installationDone: Boolean = false,
+    val rsebFileApplied: Boolean = false,
+    val mcoOk: Boolean = false,
+    val meterInstalled: Boolean = false,
+    val subsidyReceived: Boolean = false,
+    val isDuplicateInDb: Boolean = false,
+    val duplicateReason: String = "",
+    val selected: Boolean = true
+) {
+    val effectivePending2ndLoanInr: Double
+        get() = if (loan2Done) {
+            0.0
+        } else if (loan2Amount > 0.0) {
+            loan2Amount
+        } else {
+            (sanctionedLoanInr - (if (loan1Done) loan1Amount else 0.0)).coerceAtLeast(0.0)
+        }
+}
+
+enum class LoanReminderRule(val label: String, val badge: String) {
+    FIRST_LOAN_PENDING("1st Loan Pending", "LOAN 1 DUE"),
+    INSTALLATION_2DAY_ALERT("Installation Due (After 1st Loan)", "2-DAY INST ALERT"),
+    METER_TO_SECOND_LOAN("Meter Installed -> Collect 2nd Loan", "LOAN 2 DUE"),
+    SECOND_LOAN_TO_SUBSIDY("2nd Loan Done -> 5-Day Subsidy Alert", "SUBSIDY 5-DAY"),
+    PERSISTENT_RSEB_MCO("RSEB MCO Pending (Action Required)", "MCO PENDING")
+}
+
+data class LoanReminderItem(
+    val id: String,
+    val partyId: String,
+    val partyName: String,
+    val mobile: String,
+    val capacityKw: Double,
+    val rule: LoanReminderRule,
+    val title: String,
+    val detail: String,
+    val amountInr: Double = 0.0,
+    val isUrgent: Boolean = false,
+    val daysElapsed: Int = 0
+)
+
+data class LoanMcoRecord(
+    val partyId: String,
+    val sanctionedLoanAmount: Double = 0.0,
+    val loan1Amount: Double = 0.0,
+    val loan1Received: Boolean = false,
+    val loan1Date: String = "",
+    val loan2Amount: Double = 0.0,
+    val loan2Received: Boolean = false,
+    val loan2Date: String = "",
+    val installationDoneDate: String = "",
+    val rsebFileApplied: Boolean = false,
+    val mcoOk: Boolean = false,
+    val meterInstalled: Boolean = false,
+    val subsidyReceived: Boolean = false,
+    val subsidyAmount: Double = 0.0
+)
+
 // --- UNIFIED SNAPSHOT ---
 
 data class AppDatabaseSnapshot(
@@ -550,5 +656,6 @@ data class AppDatabaseSnapshot(
     val busyItems: List<BusyItem> = emptyList(),
     val busyVouchers: List<BusyVoucher> = emptyList(),
     val siteKharcha: List<SiteKharchaEntry> = emptyList(),
-    val teamChat: List<TeamChatMessage> = emptyList()
+    val teamChat: List<TeamChatMessage> = emptyList(),
+    val loanMcoRecords: List<LoanMcoRecord> = emptyList()
 )

@@ -5,6 +5,9 @@ import com.example.data.model.BusyVoucher
 import com.example.data.model.BusyVoucherType
 import com.example.data.model.CostingLineItem
 import com.example.data.model.CostingStructureType
+import com.example.data.model.DetailedProposalOptions
+import com.example.data.model.DetailedProposalPricingSummary
+import com.example.data.model.ProposalModuleType
 import com.example.data.model.RealCostingBreakdown
 import com.example.data.model.RealCostingRateConfig
 import com.example.data.model.SiteSurveyDimensions
@@ -314,6 +317,52 @@ object RealCostingCalculator {
             estimatedMonthlyUnits = monthlyUnits,
             estimatedMonthlySavingsInr = monthlySavings,
             estimatedPaybackYears = paybackYears
+        )
+    }
+
+    fun defaultNationalPortalSubsidy(
+        moduleType: ProposalModuleType,
+        capacityKwp: Double
+    ): Double {
+        if (!moduleType.isDcrSubsidy || capacityKwp <= 0.0) return 0.0
+        return when {
+            capacityKwp < 1.0 -> 30_000.0 * capacityKwp
+            capacityKwp < 2.0 -> 30_000.0 + (capacityKwp - 1.0) * 30_000.0
+            capacityKwp < 3.0 -> 60_000.0 + (capacityKwp - 2.0) * 18_000.0
+            else -> 78_000.0
+        }.roundToInt().toDouble()
+    }
+
+    fun computeDetailedProposalSummary(
+        breakdown: RealCostingBreakdown,
+        options: DetailedProposalOptions
+    ): DetailedProposalPricingSummary {
+        val base = if (options.baseSystemPriceInr > 0.0) {
+            options.baseSystemPriceInr
+        } else {
+            breakdown.grossQuotedPriceInr
+        }
+        val extraTotal = options.extraWorkRows.sumOf { it.amountInr.coerceAtLeast(0.0) }
+        val grossWithExtras = base + extraTotal
+        val effectiveSubsidy = if (options.moduleType.isDcrSubsidy) {
+            options.subsidyAmountInr.coerceAtLeast(0.0)
+        } else {
+            0.0
+        }
+        val netEffective = (grossWithExtras - effectiveSubsidy).coerceAtLeast(0.0)
+        val annualSavings = breakdown.estimatedMonthlySavingsInr * 12.0
+        val paybackYears = if (annualSavings > 0.0) {
+            ((netEffective / annualSavings) * 10.0).roundToInt() / 10.0
+        } else {
+            0.0
+        }
+        return DetailedProposalPricingSummary(
+            baseSystemPriceInr = base,
+            extraWorkTotalInr = extraTotal,
+            grossTotalWithExtrasInr = grossWithExtras,
+            subsidyAmountInr = effectiveSubsidy,
+            netEffectiveCostInr = netEffective,
+            paybackYears = paybackYears
         )
     }
 

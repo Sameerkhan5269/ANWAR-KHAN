@@ -61,6 +61,7 @@ import com.example.ui.theme.DeepNavy
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalSolarColors
 import com.example.ui.viewmodel.AiScanUiState
+import java.util.UUID
 
 @Composable
 fun BusyAiAutoImportSection(
@@ -69,9 +70,9 @@ fun BusyAiAutoImportSection(
     onScanBankUri: (Uri, String) -> Unit,
     onScanBankText: (String, String) -> Unit,
     onToggleBankRow: (String) -> Unit,
-    onPostReviewedBank: () -> Unit,
+    onPostReviewedBank: (String) -> Unit,
     onScanPurchaseBillUri: (Uri) -> Unit,
-    onPostReviewedBill: (ParsedPurchaseBill, LeadSource) -> Unit,
+    onPostReviewedBill: (ParsedPurchaseBill, LeadSource, String) -> Unit,
     onResetAi: () -> Unit
 ) {
     val solarColors = LocalSolarColors.current
@@ -150,6 +151,8 @@ fun BusyAiAutoImportSection(
             is AiScanUiState.BankReview -> {
                 val validSelectedCount = aiState.rows.count { it.selected && !it.isDuplicateUtr }
                 val dupCount = aiState.rows.count { it.isDuplicateUtr }
+                var isPostingBank by remember(aiState) { mutableStateOf(false) }
+                val bankTxnUuid = remember(aiState) { UUID.randomUUID().toString() }
 
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -237,8 +240,12 @@ fun BusyAiAutoImportSection(
                         }
 
                         Button(
-                            onClick = onPostReviewedBank,
-                            enabled = validSelectedCount > 0,
+                            onClick = {
+                                if (isPostingBank) return@Button
+                                isPostingBank = true
+                                onPostReviewedBank(bankTxnUuid)
+                            },
+                            enabled = validSelectedCount > 0 && !isPostingBank,
                             colors = ButtonDefaults.buttonColors(containerColor = solarColors.emerald),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -246,7 +253,7 @@ fun BusyAiAutoImportSection(
                         ) {
                             Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Post $validSelectedCount Vouchers in 1 Click")
+                            Text(if (isPostingBank) "Posting..." else "Post $validSelectedCount Vouchers in 1 Click")
                         }
                     }
                 }
@@ -254,6 +261,8 @@ fun BusyAiAutoImportSection(
 
             is AiScanUiState.BillReview -> {
                 val bill = aiState.bill
+                var isPostingBill by remember(aiState) { mutableStateOf(false) }
+                val billTxnUuid = remember(aiState) { UUID.randomUUID().toString() }
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(2.dp, solarColors.solarAmber),
@@ -325,13 +334,21 @@ fun BusyAiAutoImportSection(
                         }
 
                         Button(
-                            onClick = { onPostReviewedBill(bill, billCostCenter) },
+                            onClick = {
+                                if (isPostingBill) return@Button
+                                isPostingBill = true
+                                onPostReviewedBill(bill, billCostCenter, billTxnUuid)
+                            },
+                            enabled = !isPostingBill,
                             colors = ButtonDefaults.buttonColors(containerColor = DeepNavy),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("post_ai_purchase_bill_btn")
                         ) {
-                            Text("Post Purchase (F9) + Sync Inventory", color = Color.White)
+                            Text(
+                                if (isPostingBill) "Posting..." else "Post Purchase (F9) + Sync Inventory",
+                                color = Color.White
+                            )
                         }
                     }
                 }

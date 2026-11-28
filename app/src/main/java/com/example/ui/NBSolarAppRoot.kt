@@ -27,9 +27,13 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Architecture
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.SolarPower
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -62,8 +66,10 @@ import com.example.data.SyncConnectionState
 import com.example.data.model.StaffRole
 import com.example.ui.components.CompanyCircularLogo
 import com.example.ui.screens.AdminTeamScreen
+import com.example.ui.screens.BulkLoanImportDialog
 import com.example.ui.screens.BusyAccountingScreen
 import com.example.ui.screens.InventoryScreen
+import com.example.ui.screens.LiveRemindersDrawerDialog
 import com.example.ui.screens.LoginScreen
 import com.example.ui.screens.PartyDetailScreen
 import com.example.ui.screens.PipelineScreen
@@ -154,6 +160,39 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                 }
                             },
                             actions = {
+                                if (RolePermissions.canViewLoanSection(currentUser.role)) {
+                                    val alertCount = state.liveReminders.size
+                                    IconButton(
+                                        onClick = { viewModel.setRemindersDrawerVisible(true) },
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("topbar_reminders_bell")
+                                    ) {
+                                        BadgedBox(
+                                            badge = {
+                                                if (alertCount > 0) {
+                                                    Badge(
+                                                        containerColor = Color(0xFFF59E0B),
+                                                        contentColor = Color.Black
+                                                    ) {
+                                                        Text(
+                                                            text = if (alertCount > 99) "99+" else "$alertCount",
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Notifications,
+                                                contentDescription = "Today's Action & Payment Summary ($alertCount)",
+                                                tint = if (alertCount > 0) Color(0xFFFDE68A) else Color.White
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.width(4.dp))
+                                }
+
                                 // Live Supabase Sync Pill (Lime Green #7CB342 Live when connected)
                                 val pillBg = when (state.syncStatus.state) {
                                     SyncConnectionState.LIVE -> LimeGreen
@@ -269,7 +308,12 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                 onGenerateInverterAi = viewModel::generateAiInverterPlacement,
                                 onClearAiError = viewModel::clearAiPhotoErrors,
                                 onApplyQuoteToParty = viewModel::applyQuoteFromSurvey,
-                                onApproveAndConvertOrder = viewModel::approveProposalAndConvertOrder,
+                                onApproveAndConvertOrder = { existingPartyId, customerName, customerMobile, siteLocation, consumerNo, capacityKw, roofType, quotedRatePerKw, dealValue, subsidyAmount, surveyNotes, txnId ->
+                                    viewModel.approveProposalAndConvertOrder(
+                                        existingPartyId, customerName, customerMobile, siteLocation, consumerNo,
+                                        capacityKw, roofType, quotedRatePerKw, dealValue, subsidyAmount, surveyNotes, txnId
+                                    )
+                                },
                                 onShowMessage = viewModel::showToast,
                                 onBack = { viewModel.openPartyDetail(null) },
                                 onToggleStage = { stageId -> viewModel.toggleWorkflowStage(selectedParty.id, stageId) },
@@ -283,9 +327,9 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                         leadDate, roofType, rate, dealVal, followUp, surveyNotes, leadSt, div
                                     )
                                 },
-                                onAddSitePurchase = { desc, qty, vendor, amt, source, photoUri ->
+                                onAddSitePurchase = { desc, qty, vendor, amt, source, photoUri, txnId ->
                                     viewModel.addSiteMaterialPurchase(
-                                        selectedParty.id, desc, qty, vendor, amt, source, photoUri
+                                        selectedParty.id, desc, qty, vendor, amt, source, photoUri, txnId
                                     )
                                 }
                             )
@@ -301,17 +345,30 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                     onSelectDivision = viewModel::setDivisionFilter,
                                     onSearchChange = viewModel::setPipelineSearch,
                                     onOpenParty = viewModel::openPartyDetail,
-                                    onCreateParty = { name, mob, addr, city, kno, kw, src, refName, refPhone, leadDate, roofType, rate, followUp, surveyNotes, leadSt, valInr, l1, l2, sub, pct, div ->
+                                    onCreateParty = { name, mob, addr, city, kno, kw, src, refName, refPhone, leadDate, roofType, rate, followUp, surveyNotes, leadSt, valInr, l1, l2, sub, pct, div, txnId ->
                                         viewModel.createParty(
                                             name, mob, addr, city, kno, kw, src, refName, refPhone, leadDate,
-                                            roofType, rate, followUp, surveyNotes, leadSt, valInr, l1, l2, sub, pct, div
+                                            roofType, rate, followUp, surveyNotes, leadSt, valInr, l1, l2, sub, pct, div, txnId
                                         )
                                     },
                                     onDeleteParty = viewModel::deleteParty,
                                     onPreviewWhatsApp = viewModel::previewWhatsAppMessage,
-                                    onApplyWhatsApp = viewModel::applyWhatsAppUpdate,
+                                    onApplyWhatsApp = { parsed, partyId, txnId ->
+                                        viewModel.applyWhatsAppUpdate(parsed, partyId, txnId)
+                                    },
                                     onPreviewLekhaJokha = viewModel::previewBulkLekhaJokha,
-                                    onApplyLekhaJokha = viewModel::applyBulkLekhaJokha
+                                    onApplyLekhaJokha = { lines, txnId ->
+                                        viewModel.applyBulkLekhaJokha(lines, txnId)
+                                    },
+                                    canBulkImportLoanParties = RolePermissions.canBulkImportLoanParties(
+                                        currentUser.role,
+                                        currentUser.assignedDivision
+                                    ),
+                                    canViewReminders = RolePermissions.canViewLoanSection(currentUser.role),
+                                    reminders = state.liveReminders,
+                                    onOpenBulkLoanImporter = viewModel::openBulkLoanImporter,
+                                    onOpenRemindersDrawer = { viewModel.setRemindersDrawerVisible(true) },
+                                    onTickMcoOk = viewModel::tickPartyMcoOk
                                 )
 
                                 MainNavTab.SURVEY_3D -> SiteSurvey3DCostingScreen(
@@ -327,7 +384,12 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                     onGenerateInverterAi = viewModel::generateAiInverterPlacement,
                                     onClearAiError = viewModel::clearAiPhotoErrors,
                                     onApplyQuoteToParty = viewModel::applyQuoteFromSurvey,
-                                    onApproveAndConvertOrder = viewModel::approveProposalAndConvertOrder,
+                                    onApproveAndConvertOrder = { existingPartyId, customerName, customerMobile, siteLocation, consumerNo, capacityKw, roofType, quotedRatePerKw, dealValue, subsidyAmount, surveyNotes, txnId ->
+                                        viewModel.approveProposalAndConvertOrder(
+                                            existingPartyId, customerName, customerMobile, siteLocation, consumerNo,
+                                            capacityKw, roofType, quotedRatePerKw, dealValue, subsidyAmount, surveyNotes, txnId
+                                        )
+                                    },
                                     onShowMessage = viewModel::showToast
                                 )
 
@@ -339,12 +401,24 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                     rawMaterials = state.snapshot.rawMaterials,
                                     parties = visibleParties,
                                     onSearchChange = viewModel::setInventorySearch,
-                                    onAddDcrPanelsBatch = viewModel::addDcrPanelsBatch,
-                                    onAllocatePanel = viewModel::allocatePanelToParty,
-                                    onAddMeter = viewModel::addSolarMeter,
-                                    onUpdateMeter = viewModel::updateMeterAllocation,
-                                    onAddRawStock = viewModel::addRawMaterialStock,
-                                    onIssueRawMaterial = viewModel::issueRawMaterialToSite
+                                    onAddDcrPanelsBatch = { serials, brand, watt, sup, inv, txnId ->
+                                        viewModel.addDcrPanelsBatch(serials, brand, watt, sup, inv, txnId)
+                                    },
+                                    onAllocatePanel = { panelId, party, txnId ->
+                                        viewModel.allocatePanelToParty(panelId, party, txnId)
+                                    },
+                                    onAddMeter = { serial, type, makePhase, status, txnId ->
+                                        viewModel.addSolarMeter(serial, type, makePhase, status, txnId)
+                                    },
+                                    onUpdateMeter = { meterId, status, party, txnId ->
+                                        viewModel.updateMeterAllocation(meterId, status, party, txnId)
+                                    },
+                                    onAddRawStock = { matId, name, cat, unit, sup, qty, min, txnId ->
+                                        viewModel.addRawMaterialStock(matId, name, cat, unit, sup, qty, min, txnId)
+                                    },
+                                    onIssueRawMaterial = { matId, party, qty, txnId ->
+                                        viewModel.issueRawMaterialToSite(matId, party, qty, txnId)
+                                    }
                                 )
 
                                 MainNavTab.BUSY_ACCOUNTING -> BusyAccountingScreen(
@@ -358,9 +432,13 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                     rawMaterials = state.snapshot.rawMaterials,
                                     siteKharcha = state.snapshot.siteKharcha,
                                     aiState = state.aiScanState,
-                                    onAddAccount = viewModel::addBusyAccount,
-                                    onAddItem = viewModel::addBusyItem,
-                                    onPostVoucher = { vt, d, p, c, cc, igst, tax, gst, refT, refNo, utr, paidBy, nar, li ->
+                                    onAddAccount = { name, grp, opBal, gstin, cc, txnId ->
+                                        viewModel.addBusyAccount(name, grp, opBal, gstin, cc, txnId)
+                                    },
+                                    onAddItem = { name, hsn, unit, gst, sRate, pRate, stock, txnId ->
+                                        viewModel.addBusyItem(name, hsn, unit, gst, sRate, pRate, stock, txnId)
+                                    },
+                                    onPostVoucher = { vt, d, p, c, cc, igst, tax, gst, refT, refNo, utr, paidBy, nar, li, txnId ->
                                         viewModel.postBusyVoucher(
                                             type = vt,
                                             date = d,
@@ -375,7 +453,8 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                             utrOrChequeNo = utr,
                                             paidBy = paidBy,
                                             narration = nar,
-                                            lineItems = li
+                                            lineItems = li,
+                                            txnId = txnId
                                         )
                                     },
                                     onDeleteVoucher = viewModel::deleteVoucher,
@@ -383,9 +462,11 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                     onScanBankUri = viewModel::scanBankStatementFromUri,
                                     onScanBankText = viewModel::scanBankStatementFromText,
                                     onToggleBankRow = viewModel::toggleBankRowSelection,
-                                    onPostReviewedBank = viewModel::postReviewedBankVouchers,
+                                    onPostReviewedBank = { txnId -> viewModel.postReviewedBankVouchers(txnId) },
                                     onScanPurchaseBillUri = viewModel::scanPurchaseBillFromUri,
-                                    onPostReviewedBill = viewModel::postReviewedPurchaseBill,
+                                    onPostReviewedBill = { bill, cc, txnId ->
+                                        viewModel.postReviewedPurchaseBill(bill, cc, txnId)
+                                    },
                                     onResetAi = viewModel::resetAiScanner,
                                     onShowMessage = viewModel::showToast
                                 )
@@ -395,11 +476,28 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                                     staffUsers = state.snapshot.staffUsers,
                                     teamChat = visibleTeamChat,
                                     syncStatus = state.syncStatus,
+                                    storageHealthStats = state.storageHealthStats,
+                                    lastBackupDateIso = state.lastBackupDateIso,
+                                    backupOverdueBanner = state.backupOverdueBanner,
+                                    backupMasterUnlocked = state.backupMasterUnlocked,
+                                    isBackupBusy = state.isBackupBusy,
+                                    isFlushingQueue = state.isFlushingQueue,
+                                    pendingRestorePreview = state.pendingRestorePreview,
                                     healthReport = state.healthReport,
                                     isRunningSelfTest = state.isRunningSelfTest,
                                     isDarkTheme = useDark,
                                     onToggleTheme = { viewModel.toggleDarkTheme(useDark) },
                                     onForceSync = viewModel::forceCloudSync,
+                                    onFlushQueueNow = viewModel::flushOfflineQueueNow,
+                                    onClearLocalCache = viewModel::clearLocalCacheCloudSafe,
+                                    onUnlockBackupKey = viewModel::unlockBackupWithMasterKey,
+                                    onLockBackupPanel = viewModel::lockBackupPanel,
+                                    onDownloadFullBackupJson = viewModel::downloadFullCompanyBackupJson,
+                                    onExportMasterExcel = viewModel::exportMasterExcelWorkbook,
+                                    onExportMasterCsv = viewModel::exportMasterSummaryCsv,
+                                    onPickRestoreFile = viewModel::previewRestoreFromBackupUri,
+                                    onConfirmRestoreBackup = viewModel::confirmRestoreFromBackup,
+                                    onDismissRestorePreview = viewModel::dismissRestorePreview,
                                     onRunSelfTest = viewModel::runAppSelfTest,
                                     onAddStaffUser = viewModel::addStaffUser,
                                     onDeleteStaffUser = viewModel::deleteStaffUser,
@@ -412,6 +510,35 @@ fun NBSolarAppRoot(viewModel: MainViewModel = viewModel()) {
                         }
                     }
                 }
+            }
+
+            if (state.showBulkLoanImporter) {
+                BulkLoanImportDialog(
+                    scanState = state.bulkLoanScanState,
+                    onDismiss = viewModel::dismissBulkLoanImporter,
+                    onPickFile = viewModel::importLoanPartiesFromFile,
+                    onParseRawText = viewModel::importLoanPartiesFromText,
+                    onUpdateRow = viewModel::updateBulkLoanRow,
+                    onAddBlankRow = viewModel::addBlankBulkLoanRow,
+                    onRemoveRow = viewModel::removeBulkLoanRow,
+                    onCommitParties = { txnId -> viewModel.commitBulkLoanParties(txnId) },
+                    onResetScan = viewModel::resetBulkLoanScanState,
+                    onShowMessage = viewModel::showToast
+                )
+            }
+
+            if (state.showRemindersDrawer) {
+                LiveRemindersDrawerDialog(
+                    reminders = state.liveReminders,
+                    canBulkImport = RolePermissions.canBulkImportLoanParties(
+                        currentUser.role,
+                        currentUser.assignedDivision
+                    ),
+                    onDismiss = { viewModel.setRemindersDrawerVisible(false) },
+                    onOpenBulkImport = viewModel::openBulkLoanImporter,
+                    onTickMcoOk = viewModel::tickPartyMcoOk,
+                    onOpenParty = viewModel::openPartyDetail
+                )
             }
         }
     }

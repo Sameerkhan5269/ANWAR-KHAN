@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,21 +17,31 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -62,10 +74,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.core.RolePermissions
 import com.example.core.formatInr
 import com.example.core.safeDouble
+import com.example.data.BackupRestoreEngine
+import com.example.data.StorageHealthStats
 import com.example.data.SyncConnectionState
 import com.example.data.SyncStatus
 import com.example.data.model.AppHealthReport
@@ -86,11 +101,28 @@ fun AdminTeamScreen(
     staffUsers: List<StaffUser>,
     teamChat: List<TeamChatMessage>,
     syncStatus: SyncStatus,
+    storageHealthStats: StorageHealthStats = StorageHealthStats(),
+    lastBackupDateIso: String = "",
+    backupOverdueBanner: String? = null,
+    backupMasterUnlocked: Boolean = false,
+    isBackupBusy: Boolean = false,
+    isFlushingQueue: Boolean = false,
+    pendingRestorePreview: BackupRestoreEngine.BackupPreview? = null,
     healthReport: AppHealthReport? = null,
     isRunningSelfTest: Boolean = false,
     isDarkTheme: Boolean,
     onToggleTheme: () -> Unit,
     onForceSync: () -> Unit,
+    onFlushQueueNow: () -> Unit = {},
+    onClearLocalCache: () -> Unit = {},
+    onUnlockBackupKey: (String) -> Boolean = { false },
+    onLockBackupPanel: () -> Unit = {},
+    onDownloadFullBackupJson: () -> Unit = {},
+    onExportMasterExcel: () -> Unit = {},
+    onExportMasterCsv: () -> Unit = {},
+    onPickRestoreFile: (Uri) -> Unit = {},
+    onConfirmRestoreBackup: () -> Unit = {},
+    onDismissRestorePreview: () -> Unit = {},
     onRunSelfTest: () -> Unit = {},
     onAddStaffUser: (loginId: String, pin: String, displayName: String, role: StaffRole, assignedDivision: ProjectDivision?) -> Unit,
     onDeleteStaffUser: (userId: String) -> Unit,
@@ -107,6 +139,16 @@ fun AdminTeamScreen(
     var showAddStaffDialog by remember { mutableStateOf(false) }
     var topUpTargetStaff by remember { mutableStateOf<StaffUser?>(null) }
     var sqlCopied by remember { mutableStateOf(false) }
+    var masterKeyInput by remember { mutableStateOf("") }
+    var masterKeyError by remember { mutableStateOf<String?>(null) }
+
+    val restoreFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            onPickRestoreFile(uri)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = activeTab) {
@@ -256,6 +298,46 @@ fun AdminTeamScreen(
             }
         }
 
+        // Owner Weekly Backup Reminder Banner (>7 days old or never taken)
+        if (currentUser.role == StaffRole.OWNER && !backupOverdueBanner.isNullOrBlank()) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = solarColors.solarAmberContainer),
+                    border = BorderStroke(1.5.dp, solarColors.solarAmber),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("backup_overdue_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Filled.Warning,
+                            contentDescription = "Backup Overdue Warning",
+                            tint = solarColors.creditRed,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Backup Reminder",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF7C2D12)
+                            )
+                            Text(
+                                backupOverdueBanner,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF7C2D12)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // Supabase Real-Time Sync Diagnostics Card
         item {
             Card(
@@ -343,6 +425,296 @@ fun AdminTeamScreen(
                                 "Sync Now with Supabase Cloud"
                             }
                         )
+                    }
+                }
+            }
+        }
+
+        // Live Storage, Cache & Sync Health Card
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, solarColors.hairlineBorder),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("storage_health_card")
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Filled.Storage, contentDescription = null, tint = solarColors.debitBlue, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Live Storage, Cache & Sync Health",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Surface(
+                            color = when (syncStatus.state) {
+                                SyncConnectionState.LIVE -> LimeSoft
+                                SyncConnectionState.SYNCING -> solarColors.solarAmberContainer
+                                SyncConnectionState.OFFLINE -> MaterialTheme.colorScheme.errorContainer
+                            },
+                            shape = RoundedCornerShape(99.dp)
+                        ) {
+                            Text(
+                                text = when (syncStatus.state) {
+                                    SyncConnectionState.LIVE -> "Live"
+                                    SyncConnectionState.SYNCING -> "Syncing"
+                                    SyncConnectionState.OFFLINE -> "Offline"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (syncStatus.state == SyncConnectionState.LIVE) Color(0xFF2B4D12) else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        HealthStatTile(
+                            label = "Est. Cloud Data",
+                            value = BackupRestoreEngine.formatByteSize(storageHealthStats.cloudJsonBytes),
+                            sub = "${storageHealthStats.totalRecordsCount} recs / ${storageHealthStats.moduleCount} keys",
+                            modifier = Modifier.weight(1f)
+                        )
+                        HealthStatTile(
+                            label = "Local Temp Cache",
+                            value = BackupRestoreEngine.formatByteSize(storageHealthStats.localCacheBytes),
+                            sub = "Vault: ${BackupRestoreEngine.formatByteSize(storageHealthStats.localVaultBytes)}",
+                            modifier = Modifier.weight(1f)
+                        )
+                        HealthStatTile(
+                            label = "Offline Queue",
+                            value = "${syncStatus.queuedCount}",
+                            sub = if (syncStatus.queuedCount == 0) "All synced" else "Pending sync",
+                            valueColor = if (syncStatus.queuedCount > 0) solarColors.creditRed else LimeGreen,
+                            modifier = Modifier.weight(0.85f)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onFlushQueueNow,
+                            enabled = !isFlushingQueue,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("flush_queue_now_btn")
+                        ) {
+                            if (isFlushingQueue) {
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Flushing…")
+                            } else {
+                                Icon(Icons.Filled.CloudSync, contentDescription = null, modifier = Modifier.size(17.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Flush Queue Now")
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = onClearLocalCache,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("clear_local_cache_btn")
+                        ) {
+                            Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Clear Cache (Safe)")
+                        }
+                    }
+                    Text(
+                        "Cloud Safe: Clearing cache deletes only temporary export/camera previews. Supabase data & Document Vault stay intact.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // Owner-Only 1-Click Full Company Backup & Restore (Protected by Master Security Key 992921)
+        if (currentUser.role == StaffRole.OWNER) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.5.dp, MaroonPrimary.copy(alpha = 0.7f)),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("company_backup_restore_card")
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Icon(
+                                    if (backupMasterUnlocked) Icons.Filled.LockOpen else Icons.Filled.Lock,
+                                    contentDescription = null,
+                                    tint = MaroonPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        "1-Click Full Company Backup & Restore",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "Last Backup Date: ${lastBackupDateIso.ifBlank { "Never Backed Up" }}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        color = if (backupOverdueBanner != null) solarColors.creditRed else LimeGreen
+                                    )
+                                }
+                            }
+                            if (backupMasterUnlocked) {
+                                TextButton(onClick = {
+                                    masterKeyInput = ""
+                                    onLockBackupPanel()
+                                }) {
+                                    Text("Lock")
+                                }
+                            }
+                        }
+
+                        if (!backupMasterUnlocked) {
+                            Text(
+                                "Protected by Owner Master Security Key. Enter Master Key to unlock Full JSON Backup, Master Excel Workbook & Restore.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = masterKeyInput,
+                                    onValueChange = {
+                                        masterKeyInput = it.filter { c -> c.isDigit() }
+                                        masterKeyError = null
+                                    },
+                                    label = { Text("Owner Master Key") },
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                    singleLine = true,
+                                    isError = masterKeyError != null,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("backup_master_key_input")
+                                )
+                                Button(
+                                    onClick = {
+                                        val ok = onUnlockBackupKey(masterKeyInput)
+                                        if (ok) {
+                                            masterKeyInput = ""
+                                            masterKeyError = null
+                                        } else {
+                                            masterKeyError = "Wrong key"
+                                        }
+                                    },
+                                    enabled = masterKeyInput.isNotBlank(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                                    modifier = Modifier
+                                        .height(48.dp)
+                                        .testTag("unlock_backup_key_btn")
+                                ) {
+                                    Text("Unlock")
+                                }
+                            }
+                            if (masterKeyError != null) {
+                                Text(
+                                    masterKeyError.orEmpty(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        } else {
+                            Button(
+                                onClick = onDownloadFullBackupJson,
+                                enabled = !isBackupBusy,
+                                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("download_full_backup_json_btn")
+                            ) {
+                                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Download Full Company Backup (.json)", fontWeight = FontWeight.Bold)
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = onExportMasterExcel,
+                                    enabled = !isBackupBusy,
+                                    colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("export_master_excel_btn")
+                                ) {
+                                    Icon(Icons.Filled.TableChart, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Master Excel (.xlsx)", fontWeight = FontWeight.Bold)
+                                }
+
+                                OutlinedButton(
+                                    onClick = onExportMasterCsv,
+                                    enabled = !isBackupBusy,
+                                    modifier = Modifier
+                                        .height(48.dp)
+                                        .testTag("export_master_csv_btn")
+                                ) {
+                                    Text(".CSV")
+                                }
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    restoreFilePicker.launch(arrayOf("application/json", "text/plain", "*/*"))
+                                },
+                                enabled = !isBackupBusy,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("restore_backup_file_btn")
+                            ) {
+                                Icon(Icons.Filled.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Restore from Backup File (.json)")
+                            }
+
+                            if (isBackupBusy) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Processing company backup…", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -599,6 +971,118 @@ fun AdminTeamScreen(
             }
         )
     }
+
+    pendingRestorePreview?.let { preview ->
+        RestorePreviewConfirmDialog(
+            preview = preview,
+            isBusy = isBackupBusy,
+            onConfirm = onConfirmRestoreBackup,
+            onDismiss = onDismissRestorePreview
+        )
+    }
+}
+
+@Composable
+private fun HealthStatTile(
+    label: String,
+    value: String,
+    sub: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleSmall, fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, color = valueColor)
+            Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun RestorePreviewConfirmDialog(
+    preview: BackupRestoreEngine.BackupPreview,
+    isBusy: Boolean,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isBusy) onDismiss() },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Restore, contentDescription = null, tint = MaroonPrimary)
+                Spacer(Modifier.width(8.dp))
+                Text("Confirm Backup Restore", fontWeight = FontWeight.Bold)
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "${preview.companyName} (GSTIN: ${preview.gstin})",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaroonPrimary
+                )
+                Text(
+                    "Exported: ${preview.exportedAt} by ${preview.exportedBy}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Backup Contents Preview:", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        Text("• Parties & Leads: ${preview.partiesCount} (${preview.leadsCount} active leads)", style = MaterialTheme.typography.bodySmall)
+                        Text("• Loans & MCO Records: ${preview.loansMcoCount}", style = MaterialTheme.typography.bodySmall)
+                        Text("• DCR Panels: ${preview.dcrPanelsCount} • Net Meters: ${preview.solarMetersCount}", style = MaterialTheme.typography.bodySmall)
+                        Text("• Raw Materials: ${preview.rawMaterialsCount} • Challan Issue Logs: ${preview.challanIssueLogsCount}", style = MaterialTheme.typography.bodySmall)
+                        Text("• BUSY 21 Vouchers: ${preview.busyVouchersCount} (${preview.receiptsCount} Receipts)", style = MaterialTheme.typography.bodySmall)
+                        Text("• BUSY Accounts / Items: ${preview.busyAccountsCount} / ${preview.busyItemsCount}", style = MaterialTheme.typography.bodySmall)
+                        Text("• Commissions: ${preview.commissionsCount} • Site Kharcha: ${preview.siteKharchaCount}", style = MaterialTheme.typography.bodySmall)
+                        Text("• Staff Users: ${preview.staffUsersCount} • Team Chat: ${preview.chatCount}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Text(
+                    "Restoring will overwrite local and all 6 Supabase cloud module key-rows with this snapshot.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isBusy,
+                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                modifier = Modifier.testTag("confirm_restore_backup_btn")
+            ) {
+                if (isBusy) {
+                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Restoring…")
+                } else {
+                    Text("Confirm & Restore Cloud")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isBusy) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.LocalShipping
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -76,6 +77,7 @@ import com.example.core.RolePermissions
 import com.example.core.formatBusyDrCr
 import com.example.core.formatInr
 import com.example.core.safeDouble
+import com.example.data.BackupRestoreEngine
 import com.example.data.BusyAccountingEngine
 import com.example.data.model.BillRefType
 import com.example.data.model.BusyAccount
@@ -99,6 +101,7 @@ import com.example.ui.theme.MaroonPrimary
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.viewmodel.AiScanUiState
 import java.util.Locale
+import java.util.UUID
 
 private enum class BusyMenuSection(val label: String) {
     VOUCHERS("Vouchers"),
@@ -131,20 +134,20 @@ fun BusyAccountingScreen(
     rawMaterials: List<RawMaterial>,
     siteKharcha: List<SiteKharchaEntry>,
     aiState: AiScanUiState,
-    onAddAccount: (String, BusyAccountGroup, Double, String, LeadSource) -> Unit,
-    onAddItem: (String, String, String, Double, Double, Double, Double) -> Unit,
+    onAddAccount: (String, BusyAccountGroup, Double, String, LeadSource, String) -> Unit,
+    onAddItem: (String, String, String, Double, Double, Double, Double, String) -> Unit,
     onPostVoucher: (
         BusyVoucherType, String, BusyAccount, BusyAccount, LeadSource, Boolean,
-        Double, Double, BillRefType, String, String, String, String, List<BusyLineItem>
+        Double, Double, BillRefType, String, String, String, String, List<BusyLineItem>, String
     ) -> Boolean,
     onDeleteVoucher: (String) -> Unit,
     onMarkReferralPaid: (String, Boolean) -> Unit,
     onScanBankUri: (Uri, String) -> Unit,
     onScanBankText: (String, String) -> Unit,
     onToggleBankRow: (String) -> Unit,
-    onPostReviewedBank: () -> Unit,
+    onPostReviewedBank: (String) -> Unit,
     onScanPurchaseBillUri: (Uri) -> Unit,
-    onPostReviewedBill: (ParsedPurchaseBill, LeadSource) -> Unit,
+    onPostReviewedBill: (ParsedPurchaseBill, LeadSource, String) -> Unit,
     onResetAi: () -> Unit,
     onShowMessage: (String) -> Unit
 ) {
@@ -346,7 +349,30 @@ fun BusyAccountingScreen(
                             BusyVoucherRowCard(
                                 voucher = v,
                                 canDelete = canDelete,
+                                onSharePdf = {
+                                    val res = ExportPrintHelper.exportAndShareTaxInvoicePdf(context, v)
+                                    if (res.isFailure) {
+                                        onShowMessage("PDF share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                    }
+                                },
                                 onPrint = { ExportPrintHelper.printTaxInvoiceA4(context, v) },
+                                onShareChallanPdf = if (v.type == BusyVoucherType.SALES) {
+                                    {
+                                        val res = ExportPrintHelper.exportAndShareDeliveryChallanPdf(
+                                            context = context,
+                                            partyName = v.partyAccountName,
+                                            partyAddress = linkedParty?.cityOrLocation?.ifBlank { linkedParty.address } ?: "Udaipur, Rajasthan",
+                                            partyPhone = linkedParty?.mobile.orEmpty(),
+                                            challanNo = "DC-${v.voucherNo.replace("/", "-")}",
+                                            date = v.date,
+                                            items = v.lineItems,
+                                            remarks = v.narration
+                                        )
+                                        if (res.isFailure) {
+                                            onShowMessage("Challan share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                        }
+                                    }
+                                } else null,
                                 onPrintChallan = if (v.type == BusyVoucherType.SALES) {
                                     {
                                         ExportPrintHelper.printDeliveryChallanA4(
@@ -430,7 +456,7 @@ fun BusyAccountingScreen(
                                                     horizontalArrangement = Arrangement.SpaceBetween,
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Column {
+                                                    Column(modifier = Modifier.weight(1f)) {
                                                         Text(selectedAcc.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                                         Text(
                                                             "${selectedAcc.group.label} • Opening: $openTxt",
@@ -438,26 +464,53 @@ fun BusyAccountingScreen(
                                                             color = if (openDr) solarColors.debitBlue else solarColors.creditRed
                                                         )
                                                     }
-                                                    OutlinedButton(
-                                                        onClick = {
-                                                            ExportPrintHelper.printAccountLedgerA4(
-                                                                context,
-                                                                selectedAcc,
-                                                                fromDate.ifBlank { "Start" },
-                                                                toDate.ifBlank { "Today" },
-                                                                ledger.rows,
-                                                                ledger.closingBalance
-                                                            )
-                                                        },
-                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                                    ) {
-                                                        Icon(Icons.Filled.Print, contentDescription = "Print Ledger", modifier = Modifier.size(16.dp))
-                                                        Spacer(Modifier.width(4.dp))
-                                                        Text("Print A4")
+                                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                        Button(
+                                                            onClick = {
+                                                                val res = ExportPrintHelper.exportAndShareAccountLedgerPdf(
+                                                                    context,
+                                                                    selectedAcc,
+                                                                    fromDate.ifBlank { "Start" },
+                                                                    toDate.ifBlank { "Today" },
+                                                                    ledger.rows,
+                                                                    ledger.closingBalance
+                                                                )
+                                                                if (res.isFailure) {
+                                                                    onShowMessage("Ledger PDF share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                                                }
+                                                            },
+                                                            colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
+                                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                        ) {
+                                                            Icon(Icons.Filled.Share, contentDescription = "Share Ledger PDF", modifier = Modifier.size(16.dp))
+                                                            Spacer(Modifier.width(4.dp))
+                                                            Text("Share PDF")
+                                                        }
+                                                        OutlinedButton(
+                                                            onClick = {
+                                                                ExportPrintHelper.printAccountLedgerA4(
+                                                                    context,
+                                                                    selectedAcc,
+                                                                    fromDate.ifBlank { "Start" },
+                                                                    toDate.ifBlank { "Today" },
+                                                                    ledger.rows,
+                                                                    ledger.closingBalance
+                                                                )
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                        ) {
+                                                            Icon(Icons.Filled.Print, contentDescription = "Print Ledger", modifier = Modifier.size(16.dp))
+                                                        }
                                                     }
                                                 }
 
                                                 Spacer(Modifier.height(10.dp))
+                                                var ledgerLimit by remember(selectedAcc.id, fromDate, toDate) {
+                                                    mutableIntStateOf(BackupRestoreEngine.DEFAULT_PAGE_SIZE)
+                                                }
+                                                val pagedLedgerRows = remember(ledger.rows, ledgerLimit) {
+                                                    BackupRestoreEngine.paginateSlice(ledger.rows, ledgerLimit)
+                                                }
                                                 // Dense BUSY-style Tabular Ledger Grid
                                                 Column(
                                                     modifier = Modifier
@@ -474,7 +527,7 @@ fun BusyAccountingScreen(
                                                             modifier = Modifier.padding(12.dp)
                                                         )
                                                     } else {
-                                                        ledger.rows.forEach { r ->
+                                                        pagedLedgerRows.forEach { r ->
                                                             val (balStr, isDr) = formatBusyDrCr(r.runningBalance)
                                                             Row(
                                                                 modifier = Modifier.padding(vertical = 6.dp, horizontal = 6.dp),
@@ -512,6 +565,30 @@ fun BusyAccountingScreen(
                                                                 )
                                                             }
                                                             HorizontalDivider(color = solarColors.gridBorderStrong)
+                                                        }
+                                                    }
+                                                }
+
+                                                if (ledger.rows.isNotEmpty()) {
+                                                    Spacer(Modifier.height(8.dp))
+                                                    Text(
+                                                        text = "Showing ${pagedLedgerRows.size} of ${ledger.rows.size} entries",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                    if (pagedLedgerRows.size < ledger.rows.size) {
+                                                        Spacer(Modifier.height(6.dp))
+                                                        OutlinedButton(
+                                                            onClick = { ledgerLimit += BackupRestoreEngine.DEFAULT_PAGE_SIZE },
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .height(48.dp)
+                                                                .testTag("ledger_load_more_btn")
+                                                        ) {
+                                                            Text(
+                                                                "Load More (25 per page) • ${ledger.rows.size - pagedLedgerRows.size} remaining",
+                                                                fontWeight = FontWeight.Bold
+                                                            )
                                                         }
                                                     }
                                                 }
@@ -567,7 +644,30 @@ fun BusyAccountingScreen(
                                     BusyVoucherRowCard(
                                         voucher = v,
                                         canDelete = canDelete,
+                                        onSharePdf = {
+                                            val res = ExportPrintHelper.exportAndShareTaxInvoicePdf(context, v)
+                                            if (res.isFailure) {
+                                                onShowMessage("PDF share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                            }
+                                        },
                                         onPrint = { ExportPrintHelper.printTaxInvoiceA4(context, v) },
+                                        onShareChallanPdf = if (v.type == BusyVoucherType.SALES) {
+                                            {
+                                                val res = ExportPrintHelper.exportAndShareDeliveryChallanPdf(
+                                                    context = context,
+                                                    partyName = v.partyAccountName,
+                                                    partyAddress = linkedParty?.cityOrLocation?.ifBlank { linkedParty.address } ?: "Udaipur, Rajasthan",
+                                                    partyPhone = linkedParty?.mobile.orEmpty(),
+                                                    challanNo = "DC-${v.voucherNo.replace("/", "-")}",
+                                                    date = v.date,
+                                                    items = v.lineItems,
+                                                    remarks = v.narration
+                                                )
+                                                if (res.isFailure) {
+                                                    onShowMessage("Challan share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                                }
+                                            }
+                                        } else null,
                                         onPrintChallan = if (v.type == BusyVoucherType.SALES) {
                                             {
                                                 ExportPrintHelper.printDeliveryChallanA4(
@@ -597,19 +697,48 @@ fun BusyAccountingScreen(
                                     modifier = Modifier.testTag("day_by_day_report_card")
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Text(
-                                            "Day-by-Day Financial Register",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            "Daily Sales, Collections, Purchases, Payments & Site Kharcha Cash Flow",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    "Day-by-Day Financial Register",
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    "Daily Sales, Collections, Purchases, Payments & Site Kharcha",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Button(
+                                                onClick = {
+                                                    val res = ExportPrintHelper.exportAndShareDayByDayReportPdf(context, dayByDayRows)
+                                                    if (res.isFailure) {
+                                                        onShowMessage("Day-by-Day PDF share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                                    }
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                modifier = Modifier.testTag("share_day_by_day_pdf_btn")
+                                            ) {
+                                                Icon(Icons.Filled.Share, contentDescription = "Share Day-by-Day PDF", modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Share PDF", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
                                         if (dayByDayRows.isEmpty()) {
                                             Text("No daily entries posted yet.", style = MaterialTheme.typography.bodySmall)
                                         } else {
+                                            var dayByDayLimit by remember(dayByDayRows.size) {
+                                                mutableIntStateOf(BackupRestoreEngine.DEFAULT_PAGE_SIZE)
+                                            }
+                                            val pagedDayByDay = remember(dayByDayRows, dayByDayLimit) {
+                                                BackupRestoreEngine.paginateSlice(dayByDayRows, dayByDayLimit)
+                                            }
                                             Column(modifier = Modifier.horizontalScroll(rememberScrollState())) {
                                                 BusyTableHeaderRow(
                                                     listOf(
@@ -622,7 +751,7 @@ fun BusyAccountingScreen(
                                                         "Net Cash (₹)" to 106
                                                     )
                                                 )
-                                                dayByDayRows.forEach { d ->
+                                                pagedDayByDay.forEach { d ->
                                                     Row(
                                                         modifier = Modifier.padding(vertical = 6.dp, horizontal = 6.dp),
                                                         verticalAlignment = Alignment.CenterVertically
@@ -657,6 +786,25 @@ fun BusyAccountingScreen(
                                                     Text(formatInr(dayByDayRows.sumOf { it.paymentsAndKharcha }), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), fontWeight = FontWeight.Bold, color = solarColors.creditRed, textAlign = TextAlign.End, modifier = Modifier.width(100.dp))
                                                     val totalCash = dayByDayRows.sumOf { it.netCashFlow }
                                                     Text(formatInr(totalCash), style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle), fontWeight = FontWeight.Bold, color = if (totalCash >= 0) solarColors.emerald else solarColors.creditRed, textAlign = TextAlign.End, modifier = Modifier.width(106.dp))
+                                                }
+                                            }
+                                            Text(
+                                                text = "Showing ${pagedDayByDay.size} of ${dayByDayRows.size} days",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            if (pagedDayByDay.size < dayByDayRows.size) {
+                                                OutlinedButton(
+                                                    onClick = { dayByDayLimit += BackupRestoreEngine.DEFAULT_PAGE_SIZE },
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(48.dp)
+                                                        .testTag("day_by_day_load_more_btn")
+                                                ) {
+                                                    Text(
+                                                        "Load More (25 per page) • ${dayByDayRows.size - pagedDayByDay.size} remaining",
+                                                        fontWeight = FontWeight.Bold
+                                                    )
                                                 }
                                             }
                                         }
@@ -789,15 +937,29 @@ fun BusyAccountingScreen(
                                                     fontWeight = FontWeight.Bold,
                                                     color = if (row.netProfit >= 0) LimeGreen else solarColors.creditRed
                                                 )
-                                                OutlinedButton(
-                                                    onClick = {
-                                                        ExportPrintHelper.printPartyCostingReportA4(context, row, pPanels, pMeters)
-                                                    },
-                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                                ) {
-                                                    Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                    Spacer(Modifier.width(4.dp))
-                                                    Text("Costing PDF", style = MaterialTheme.typography.labelSmall)
+                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    Button(
+                                                        onClick = {
+                                                            val res = ExportPrintHelper.exportAndSharePartyCostingReportPdf(context, row, pPanels, pMeters)
+                                                            if (res.isFailure) {
+                                                                onShowMessage("Costing PDF share failed: ${res.exceptionOrNull()?.message ?: "error"}")
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
+                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                        Spacer(Modifier.width(4.dp))
+                                                        Text("Share PDF", style = MaterialTheme.typography.labelSmall)
+                                                    }
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            ExportPrintHelper.printPartyCostingReportA4(context, row, pPanels, pMeters)
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Icon(Icons.Filled.Print, contentDescription = "Print Costing PDF", modifier = Modifier.size(16.dp))
+                                                    }
                                                 }
                                             }
                                         }
@@ -1171,8 +1333,8 @@ fun BusyAccountingScreen(
     if (showAddAccountDialog) {
         AddAccountMasterDialog(
             onDismiss = { showAddAccountDialog = false },
-            onSave = { name, grp, opBal, gstin, cc ->
-                onAddAccount(name, grp, opBal, gstin, cc)
+            onSave = { name, grp, opBal, gstin, cc, txnId ->
+                onAddAccount(name, grp, opBal, gstin, cc, txnId)
                 showAddAccountDialog = false
             }
         )
@@ -1182,8 +1344,8 @@ fun BusyAccountingScreen(
     if (showAddItemDialog) {
         AddItemMasterDialog(
             onDismiss = { showAddItemDialog = false },
-            onSave = { name, hsn, unit, gst, sRate, pRate, stock ->
-                onAddItem(name, hsn, unit, gst, sRate, pRate, stock)
+            onSave = { name, hsn, unit, gst, sRate, pRate, stock, txnId ->
+                onAddItem(name, hsn, unit, gst, sRate, pRate, stock, txnId)
                 showAddItemDialog = false
             }
         )
@@ -1213,7 +1375,9 @@ private fun BusyTableHeaderRow(columns: List<Pair<String, Int>>) {
 private fun BusyVoucherRowCard(
     voucher: BusyVoucher,
     canDelete: Boolean,
+    onSharePdf: () -> Unit,
     onPrint: () -> Unit,
+    onShareChallanPdf: (() -> Unit)? = null,
     onPrintChallan: (() -> Unit)? = null,
     onDelete: () -> Unit
 ) {
@@ -1270,30 +1434,40 @@ private fun BusyVoucherRowCard(
                 Text(voucher.narration, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (onPrintChallan != null) {
-                    TextButton(onClick = onPrintChallan) {
-                        Icon(Icons.Filled.LocalShipping, contentDescription = "Delivery Challan PDF", modifier = Modifier.size(16.dp))
+                if (onShareChallanPdf != null) {
+                    TextButton(onClick = onShareChallanPdf) {
+                        Icon(Icons.Filled.LocalShipping, contentDescription = "Share Challan PDF", modifier = Modifier.size(16.dp), tint = LimeGreen)
                         Spacer(Modifier.width(4.dp))
-                        Text("Challan")
+                        Text("Challan PDF")
                     }
                 }
-                val printLabel = when (voucher.type) {
-                    BusyVoucherType.SALES -> "Tax Invoice"
-                    BusyVoucherType.RECEIPT -> "Receipt PDF"
-                    else -> "Print A4"
+                if (onPrintChallan != null) {
+                    IconButton(onClick = onPrintChallan) {
+                        Icon(Icons.Filled.LocalShipping, contentDescription = "Print Delivery Challan", modifier = Modifier.size(16.dp))
+                    }
                 }
-                TextButton(onClick = onPrint) {
+                val shareLabel = when (voucher.type) {
+                    BusyVoucherType.SALES -> "Share Tax Invoice"
+                    BusyVoucherType.RECEIPT -> "Share Receipt"
+                    else -> "Share PDF"
+                }
+                TextButton(onClick = onSharePdf) {
+                    Icon(Icons.Filled.Share, contentDescription = shareLabel, modifier = Modifier.size(16.dp), tint = LimeGreen)
+                    Spacer(Modifier.width(4.dp))
+                    Text(shareLabel)
+                }
+                IconButton(onClick = onPrint) {
                     Icon(
                         if (voucher.type == BusyVoucherType.RECEIPT) Icons.Filled.ReceiptLong else Icons.Filled.Print,
-                        contentDescription = printLabel,
-                        modifier = Modifier.size(16.dp)
+                        contentDescription = "Print A4",
+                        modifier = Modifier.size(18.dp)
                     )
-                    Spacer(Modifier.width(4.dp))
-                    Text(printLabel)
                 }
                 if (canDelete) {
                     IconButton(onClick = onDelete) {
@@ -1386,8 +1560,10 @@ private fun BusyEmptyNotice(text: String) {
 @Composable
 private fun AddAccountMasterDialog(
     onDismiss: () -> Unit,
-    onSave: (String, BusyAccountGroup, Double, String, LeadSource) -> Unit
+    onSave: (String, BusyAccountGroup, Double, String, LeadSource, String) -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var group by remember { mutableStateOf(BusyAccountGroup.SUNDRY_DEBTORS) }
     var opBal by remember { mutableStateOf("0") }
@@ -1448,9 +1624,14 @@ private fun AddAccountMasterDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(name, group, safeDouble(opBal, 0.0), gstin, costCenter) },
-                enabled = name.isNotBlank()
-            ) { Text("Save Account") }
+                onClick = {
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
+                    onSave(name, group, safeDouble(opBal, 0.0), gstin, costCenter, txnUuid)
+                },
+                enabled = name.isNotBlank() && !isSubmitting,
+                modifier = Modifier.testTag("add_busy_account_submit_btn")
+            ) { Text(if (isSubmitting) "Saving..." else "Save Account") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -1459,8 +1640,10 @@ private fun AddAccountMasterDialog(
 @Composable
 private fun AddItemMasterDialog(
     onDismiss: () -> Unit,
-    onSave: (String, String, String, Double, Double, Double, Double) -> Unit
+    onSave: (String, String, String, Double, Double, Double, Double, String) -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var hsn by remember { mutableStateOf("85414300") }
     var unit by remember { mutableStateOf("Nos") }
@@ -1541,6 +1724,8 @@ private fun AddItemMasterDialog(
         confirmButton = {
             Button(
                 onClick = {
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
                     onSave(
                         name,
                         hsn,
@@ -1548,11 +1733,13 @@ private fun AddItemMasterDialog(
                         safeDouble(gst, 18.0),
                         safeDouble(saleRate, 0.0),
                         safeDouble(purRate, 0.0),
-                        safeDouble(stock, 0.0)
+                        safeDouble(stock, 0.0),
+                        txnUuid
                     )
                 },
-                enabled = name.isNotBlank()
-            ) { Text("Save Item") }
+                enabled = name.isNotBlank() && !isSubmitting,
+                modifier = Modifier.testTag("add_busy_item_submit_btn")
+            ) { Text(if (isSubmitting) "Saving..." else "Save Item") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )

@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Print
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -220,21 +221,38 @@ fun PartyLeadDetailsTab(
                                     color = if (netProfit >= 0) LimeGreen else solarColors.creditRed
                                 )
                             }
-                            OutlinedButton(
-                                onClick = {
-                                    ExportPrintHelper.printPartyCostingReportA4(
-                                        context,
-                                        costingRow,
-                                        allocatedPanels,
-                                        allocatedMeters
-                                    )
-                                },
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                modifier = Modifier.testTag("print_party_costing_pdf_btn")
-                            ) {
-                                Icon(Icons.Filled.Print, contentDescription = "Print Costing PDF", modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Print Costing PDF")
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(
+                                    onClick = {
+                                        ExportPrintHelper.exportAndSharePartyCostingReportPdf(
+                                            context,
+                                            costingRow,
+                                            allocatedPanels,
+                                            allocatedMeters
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.testTag("share_party_costing_pdf_btn")
+                                ) {
+                                    Icon(Icons.Filled.Share, contentDescription = "Share Costing PDF", modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Share PDF", style = MaterialTheme.typography.labelSmall)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        ExportPrintHelper.printPartyCostingReportA4(
+                                            context,
+                                            costingRow,
+                                            allocatedPanels,
+                                            allocatedMeters
+                                        )
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.testTag("print_party_costing_pdf_btn")
+                                ) {
+                                    Icon(Icons.Filled.Print, contentDescription = "Print Costing PDF", modifier = Modifier.size(16.dp))
+                                }
                             }
                         }
                     }
@@ -599,8 +617,11 @@ private fun EditLeadDetailsDialog(
             }
         },
         confirmButton = {
+            var isSavingLead by remember { mutableStateOf(false) }
             Button(
                 onClick = {
+                    if (isSavingLead) return@Button
+                    isSavingLead = true
                     onSave(
                         mobile,
                         city,
@@ -619,9 +640,11 @@ private fun EditLeadDetailsDialog(
                         division
                     )
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary)
+                enabled = !isSavingLead,
+                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                modifier = Modifier.testTag("save_lead_details_btn")
             ) {
-                Text("Save Lead")
+                Text(if (isSavingLead) "Saving..." else "Save Lead")
             }
         },
         dismissButton = {

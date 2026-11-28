@@ -49,6 +49,7 @@ import com.example.ui.theme.LimeGreen
 import com.example.ui.theme.LocalSolarColors
 import com.example.ui.theme.MaroonPrimary
 import com.example.ui.theme.TabularNumberStyle
+import java.util.UUID
 
 @Composable
 fun AddPartyDialog(
@@ -76,9 +77,12 @@ fun AddPartyDialog(
         loan2: Double,
         subsidy: Double,
         partnerPct: Double,
-        division: ProjectDivision
+        division: ProjectDivision,
+        txnId: String
     ) -> Unit
 ) {
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var mobile by remember { mutableStateOf("") }
     var cityOrLocation by remember { mutableStateOf("Udaipur") }
@@ -319,6 +323,8 @@ fun AddPartyDialog(
         confirmButton = {
             Button(
                 onClick = {
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
                     onSave(
                         name,
                         mobile,
@@ -340,13 +346,15 @@ fun AddPartyDialog(
                         safeDouble(loan2, 0.0),
                         safeDouble(subsidy, 0.0),
                         if (canSetPartnerSplit) safeDouble(partnerPct, 0.0) else 0.0,
-                        selectedDivision
+                        selectedDivision,
+                        txnUuid
                     )
                 },
-                enabled = name.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary)
+                enabled = name.isNotBlank() && !isSubmitting,
+                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                modifier = Modifier.testTag("create_party_submit_btn")
             ) {
-                Text("Create Party")
+                Text(if (isSubmitting) "Saving..." else "Create Party")
             }
         },
         dismissButton = {
@@ -359,12 +367,14 @@ fun AddPartyDialog(
 fun WhatsAppParserDialog(
     parties: List<PartyProject>,
     onPreview: (String) -> ParsedWhatsAppUpdate,
-    onApply: (ParsedWhatsAppUpdate, String?) -> Unit,
+    onApply: (ParsedWhatsAppUpdate, String?, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var message by remember { mutableStateOf("") }
     var preview by remember { mutableStateOf<ParsedWhatsAppUpdate?>(null) }
     var overridePartyId by remember { mutableStateOf<String?>(null) }
+    var isSubmitting by remember { mutableStateOf(false) }
+    val txnUuid = remember(message) { UUID.randomUUID().toString() }
     val solarColors = LocalSolarColors.current
 
     AlertDialog(
@@ -441,13 +451,16 @@ fun WhatsAppParserDialog(
         confirmButton = {
             Button(
                 onClick = {
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
                     val p = preview ?: onPreview(message)
-                    onApply(p, overridePartyId)
+                    onApply(p, overridePartyId, txnUuid)
                 },
-                enabled = message.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White)
+                enabled = message.isNotBlank() && !isSubmitting,
+                colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
+                modifier = Modifier.testTag("whatsapp_apply_sync_btn")
             ) {
-                Text("Apply & Sync")
+                Text(if (isSubmitting) "Syncing..." else "Apply & Sync")
             }
         },
         dismissButton = {
@@ -459,11 +472,13 @@ fun WhatsAppParserDialog(
 @Composable
 fun LekhaJokhaBulkDialog(
     onPreview: (String) -> List<ParsedLekhaJokhaLine>,
-    onApply: (List<ParsedLekhaJokhaLine>) -> Unit,
+    onApply: (List<ParsedLekhaJokhaLine>, String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var rawText by remember { mutableStateOf("") }
     var parsedLines by remember { mutableStateOf<List<ParsedLekhaJokhaLine>>(emptyList()) }
+    var isSubmitting by remember { mutableStateOf(false) }
+    val txnUuid = remember(rawText) { UUID.randomUUID().toString() }
     val solarColors = LocalSolarColors.current
 
     AlertDialog(
@@ -525,11 +540,16 @@ fun LekhaJokhaBulkDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onApply(parsedLines) },
-                enabled = parsedLines.isNotEmpty(),
-                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary)
+                onClick = {
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
+                    onApply(parsedLines, txnUuid)
+                },
+                enabled = parsedLines.isNotEmpty() && !isSubmitting,
+                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                modifier = Modifier.testTag("lekha_jokha_submit_btn")
             ) {
-                Text("Post to Kharcha & BUSY 21")
+                Text(if (isSubmitting) "Posting..." else "Post to Kharcha & BUSY 21")
             }
         },
         dismissButton = {

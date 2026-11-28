@@ -3,11 +3,13 @@ package com.example.data
 import android.graphics.Bitmap
 import android.util.Log
 import com.example.core.todayIsoDate
+import com.example.data.model.BulkLoanPartyRow
 import com.example.data.model.BusyAccount
 import com.example.data.model.BusyVoucherType
 import com.example.data.model.ParsedBankRow
 import com.example.data.model.ParsedPurchaseBill
 import com.example.data.model.ParsedPurchaseLineItem
+import com.example.data.model.PartyProject
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
@@ -97,6 +99,51 @@ class FirebaseAiScannerRepository {
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = purchaseBillSchema
+            }
+        )
+    }
+
+    private val loanRegisterSchema = Schema.obj(
+        properties = mapOf(
+            "parties" to Schema.array(
+                description = "List of solar loan customer parties extracted from ledger photo, PDF, or raw WhatsApp text",
+                items = Schema.obj(
+                    properties = mapOf(
+                        "partyName" to Schema.string(description = "Full customer/party name"),
+                        "mobile" to Schema.string(description = "10-digit mobile number if present, else empty"),
+                        "siteCity" to Schema.string(description = "Site village/city/address if present, else Udaipur"),
+                        "capacityKw" to Schema.double(description = "Solar plant capacity in kW (default 3.0)"),
+                        "referrerName" to Schema.string(description = "Referrer / partner name e.g. Thakur Ji, or empty"),
+                        "commissionPct" to Schema.double(description = "Referrer commission percentage if mentioned, else 0"),
+                        "totalContractInr" to Schema.double(description = "Total deal/contract amount in INR, else 0"),
+                        "sanctionedLoanInr" to Schema.double(description = "Sanctioned bank loan amount in INR, else 0"),
+                        "loan1Amount" to Schema.double(description = "1st loan tranche amount in INR, else 0"),
+                        "loan1Done" to Schema.boolean(description = "True if 1st loan tranche is received/done/disbursed"),
+                        "loan1Date" to Schema.string(description = "1st loan date in YYYY-MM-DD if known, else empty"),
+                        "loan2Amount" to Schema.double(description = "2nd loan tranche amount in INR, else 0"),
+                        "loan2Done" to Schema.boolean(description = "True if 2nd loan tranche is received/done/disbursed"),
+                        "loan2Date" to Schema.string(description = "2nd loan date in YYYY-MM-DD if known, else empty"),
+                        "installationDone" to Schema.boolean(description = "True if site solar installation is completed"),
+                        "rsebFileApplied" to Schema.boolean(description = "True if RSEB / AVVNL DISCOM file is applied/submitted"),
+                        "mcoOk" to Schema.boolean(description = "True if RSEB MCO is approved/OK"),
+                        "meterInstalled" to Schema.boolean(description = "True if bi-directional net meter is installed"),
+                        "subsidyReceived" to Schema.boolean(description = "True if PM Surya Ghar subsidy has been received")
+                    ),
+                    optionalProperties = listOf(
+                        "mobile", "siteCity", "referrerName", "commissionPct",
+                        "loan1Date", "loan2Date"
+                    )
+                )
+            )
+        )
+    )
+
+    private val loanRegisterModel by lazy {
+        Firebase.ai.generativeModel(
+            modelName = "gemini-3.8-flash",
+            generationConfig = generationConfig {
+                responseMimeType = "application/json"
+                responseSchema = loanRegisterSchema
             }
         )
     }
@@ -297,6 +344,98 @@ class FirebaseAiScannerRepository {
         } catch (e: Exception) {
             Log.e(TAG, "Purchase bill scan failed", e)
             Result.failure(Exception(e.localizedMessage ?: "Failed to scan purchase bill."))
+        }
+    }
+
+    /**
+     * Extracts multiple existing solar loan customer rows from a handwritten/printed register photo,
+     * PDF statement, or unstructured WhatsApp text list using Gemini AI.
+     */
+    suspend fun scanLoanRegister(
+        bitmap: Bitmap? = null,
+        pdfBytes: ByteArray? = null,
+        rawText: String? = null,
+        existingParties: List<PartyProject> = emptyList()
+    ): Result<List<BulkLoanPartyRow>> {
+        return try {
+            val prompt = """
+                You are an expert Solar EPC Data Entry Assistant for NB Engineering Works & Electricals (Udaipur, Rajasthan).
+                Extract EVERY customer/party row from the provided handwritten/printed loan register photo, PDF, or raw WhatsApp notes.
+                Convert Indian rupee shorthands accurately: e.g. '1.85L' or '1.85 Lac' -> 185000, '70k' -> 70000.
+                Normalize dates to YYYY-MM-DD (or empty string if missing).
+                Extract boolean statuses accurately:
+                - loan1Done / loan2Done: true only if marked Done, Received, OK, Paid, Credited, Yes, or ✓.
+                - installationDone: true if installation/work is done.
+                - rsebFileApplied: true if RSEB / AVVNL / DISCOM file applied or submitted.
+                - mcoOk: true if MCO OK / approved / commissioned.
+                - meterInstalled: true if net meter installed.
+                - subsidyReceived: true if subsidy received / credited / disbursed.
+            """.trimIndent()
+
+            val response = withTimeout(60_000L) {
+                loanRegisterModel.generateContent(
+                    content {
+                        text(prompt)
+                        if (bitmap != null) image(bitmap)
+                        if (pdfBytes != null && pdfBytes.isNotEmpty()) {
+                            inlineData(pdfBytes, "application/pdf")
+                        }
+                        if (!rawText.isNullOrBlank()) {
+                            text("Raw loan parties text / notes:\n$rawText")
+                        }
+                    }
+                )
+            }
+
+            val jsonStr = response.text ?: return Result.failure(IllegalStateException("AI returned an empty response."))
+            val root = JSONObject(jsonStr)
+            val arr = root.optJSONArray("parties")
+                ?: return Result.failure(IllegalStateException("No loan party rows detected."))
+
+            val extracted = buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val name = o.optString("partyName").trim()
+                    if (name.isBlank()) continue
+                    add(
+                        BulkLoanPartyRow(
+                            partyName = name,
+                            mobile = o.optString("mobile").trim(),
+                            siteCity = o.optString("siteCity").trim().ifBlank { "Udaipur" },
+                            capacityKw = o.optDouble("capacityKw", 3.0).takeIf { !it.isNaN() && it > 0.0 } ?: 3.0,
+                            referrerName = o.optString("referrerName").trim(),
+                            commissionPct = o.optDouble("commissionPct", 0.0).takeIf { !it.isNaN() && it >= 0.0 } ?: 0.0,
+                            totalContractInr = o.optDouble("totalContractInr", 0.0).takeIf { !it.isNaN() && it >= 0.0 } ?: 0.0,
+                            sanctionedLoanInr = o.optDouble("sanctionedLoanInr", 0.0).takeIf { !it.isNaN() && it >= 0.0 } ?: 0.0,
+                            loan1Amount = o.optDouble("loan1Amount", 0.0).takeIf { !it.isNaN() && it >= 0.0 } ?: 0.0,
+                            loan1Done = o.optBoolean("loan1Done", false),
+                            loan1Date = LoanReminderEngine.normalizeDateToIso(o.optString("loan1Date")),
+                            loan2Amount = o.optDouble("loan2Amount", 0.0).takeIf { !it.isNaN() && it >= 0.0 } ?: 0.0,
+                            loan2Done = o.optBoolean("loan2Done", false),
+                            loan2Date = LoanReminderEngine.normalizeDateToIso(o.optString("loan2Date")),
+                            installationDone = o.optBoolean("installationDone", false),
+                            rsebFileApplied = o.optBoolean("rsebFileApplied", false),
+                            mcoOk = o.optBoolean("mcoOk", false),
+                            meterInstalled = o.optBoolean("meterInstalled", false),
+                            subsidyReceived = o.optBoolean("subsidyReceived", false)
+                        )
+                    )
+                }
+            }
+
+            if (extracted.isEmpty()) {
+                Result.failure(IllegalStateException("Could not find any customer rows in this document."))
+            } else {
+                Result.success(BulkLoanImporter.markDuplicates(extracted, existingParties))
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "Loan register scan timed out", e)
+            Result.failure(Exception("AI Loan Register scan timed out after 60s. Please retry with a clearer photo or smaller PDF."))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Loan register scan failed", e)
+            Result.failure(Exception(e.localizedMessage ?: "Failed to scan loan register."))
         }
     }
 }

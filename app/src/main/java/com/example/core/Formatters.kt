@@ -68,6 +68,14 @@ object RolePermissions {
     fun canLogSitePurchase(role: StaffRole): Boolean = true
 
     fun canUploadVaultDocs(role: StaffRole): Boolean = true
+
+    fun canBulkImportLoanParties(
+        role: StaffRole,
+        assignedDivision: com.example.data.model.ProjectDivision?
+    ): Boolean {
+        if (assignedDivision == com.example.data.model.ProjectDivision.WIND) return false
+        return role == StaffRole.OWNER || role == StaffRole.ACCOUNTS || role == StaffRole.OFFICE
+    }
 }
 
 /**

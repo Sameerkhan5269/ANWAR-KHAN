@@ -119,6 +119,43 @@ data class RealCostingBreakdown(
     val estimatedPaybackYears: Double
 )
 
+enum class ProposalModuleType(
+    val label: String,
+    val shortLabel: String,
+    val isDcrSubsidy: Boolean
+) {
+    DCR_WITH_SUBSIDY("DCR - With Subsidy", "DCR (Subsidy)", true),
+    NON_DCR_WITHOUT_SUBSIDY("Non-DCR - Without Subsidy", "Non-DCR (No Subsidy)", false)
+}
+
+data class ProposalExtraWorkRow(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val title: String,
+    val amountInr: Double
+)
+
+data class DetailedProposalOptions(
+    val moduleType: ProposalModuleType = ProposalModuleType.DCR_WITH_SUBSIDY,
+    val capacityKwp: Double = 3.0,
+    val baseSystemPriceInr: Double = 0.0,
+    val subsidyAmountInr: Double = 78_000.0,
+    val extraWorkRows: List<ProposalExtraWorkRow> = emptyList(),
+    val panelMake: String = "ADANI / WAAREE / LUMINOUS",
+    val inverterMake: String = "WAAREE / K-SOLAR / SUNGROW",
+    val paymentTerms: String = "70% Advance, 20% before Material Dispatch, 10% after Installation",
+    val proposalRefNo: String = "",
+    val validityDays: Int = 15
+)
+
+data class DetailedProposalPricingSummary(
+    val baseSystemPriceInr: Double,
+    val extraWorkTotalInr: Double,
+    val grossTotalWithExtrasInr: Double,
+    val subsidyAmountInr: Double,
+    val netEffectiveCostInr: Double,
+    val paybackYears: Double
+)
+
 enum class ProposalFormat(
     val title: String,
     val shortTitle: String,
@@ -126,10 +163,10 @@ enum class ProposalFormat(
     val pageBadge: String
 ) {
     PM_SURYA_GHAR_2PG(
-        title = "1. PM Surya Ghar Residential Subsidy (2-Pg)",
-        shortTitle = "PM Surya Ghar (2p)",
-        subtitle = "Gross Price, ₹30k/₹60k/₹78k Subsidy, DBT Flow & 25-Yr DCR Warranty",
-        pageBadge = "2-PAGE CLEAN"
+        title = "1. Detailed 7-Page Solar Proposal – 2026 (SITC)",
+        shortTitle = "7-Page 2026 SITC",
+        subtitle = "Cover, About, SLD & 3D CAD, BOM Specs, Extra Work & Subsidy, Timeline & Commercial Terms",
+        pageBadge = "7-PAGE 2026 SITC"
     ),
     FULL_3D_DOSSIER_4PG(
         title = "2. Full Engineering & 3D Dossier (4-Pg)",

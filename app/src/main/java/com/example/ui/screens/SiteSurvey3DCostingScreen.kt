@@ -33,12 +33,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -94,8 +96,11 @@ import com.example.data.RealCostingCalculator
 import com.example.data.model.BusyItem
 import com.example.data.model.BusyVoucher
 import com.example.data.model.CostingStructureType
+import com.example.data.model.DetailedProposalOptions
 import com.example.data.model.PartyProject
+import com.example.data.model.ProposalExtraWorkRow
 import com.example.data.model.ProposalFormat
+import com.example.data.model.ProposalModuleType
 import com.example.data.model.RealCostingBreakdown
 import com.example.data.model.RoofStructureType
 import com.example.data.model.SiteSurveyDimensions
@@ -110,6 +115,7 @@ import com.example.ui.theme.MaroonPrimary
 import com.example.ui.theme.TabularNumberStyle
 import com.example.ui.viewmodel.AiPhotoPlacementUiState
 import java.util.Locale
+import java.util.UUID
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -154,8 +160,9 @@ fun SiteSurvey3DCostingScreen(
         quotedRatePerKw: Double,
         dealValue: Double,
         subsidyAmount: Double,
-        surveyNotes: String
-    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _ -> },
+        surveyNotes: String,
+        txnId: String
+    ) -> Unit = { _, _, _, _, _, _, _, _, _, _, _, _ -> },
     onShowMessage: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -212,12 +219,31 @@ fun SiteSurvey3DCostingScreen(
     var selectedProposalFormat by remember { mutableStateOf(ProposalFormat.PM_SURYA_GHAR_2PG) }
     var showProposalPreview by remember { mutableStateOf(false) }
 
+    // Format 1 (7-Page Solar Project Proposal – 2026 SITC) editable per-party controls
+    var proposalModuleType by remember { mutableStateOf(ProposalModuleType.DCR_WITH_SUBSIDY) }
+    var basePriceOverrideText by remember(activeParty?.id) { mutableStateOf("") }
+    var subsidyOverrideText by remember(activeParty?.id) { mutableStateOf("78000") }
+    var panelMakeText by remember { mutableStateOf("ADANI / WAAREE / LUMINOUS") }
+    var inverterMakeText by remember { mutableStateOf("WAAREE / K-SOLAR / SUNGROW") }
+    var paymentTermsText by remember {
+        mutableStateOf("70% Advance, 20% before Material Dispatch, 10% after Installation")
+    }
+    var extraWorkRows by remember(activeParty?.id) { mutableStateOf<List<ProposalExtraWorkRow>>(emptyList()) }
+
     LaunchedEffect(structureType) {
         structRateText = structureType.defaultRatePerKw.roundToInt().toString()
         tiltText = structureType.defaultTiltDeg.roundToInt().toString()
     }
 
     val capacityKw = safeDouble(capacityKwText, 3.0).coerceIn(1.0, 250.0)
+
+    LaunchedEffect(proposalModuleType, capacityKw) {
+        subsidyOverrideText = RealCostingCalculator
+            .defaultNationalPortalSubsidy(proposalModuleType, capacityKw)
+            .roundToInt()
+            .toString()
+    }
+
     val dimensions = remember(
         roofLengthText, roofWidthText, inverterDistText, earthingDistText, panelWpText, tiltText, azimuthText
     ) {
@@ -252,6 +278,43 @@ fun SiteSurvey3DCostingScreen(
             dimensions = dimensions,
             rates = effectiveRates
         )
+    }
+
+    val detailedOptions = remember(
+        proposalModuleType,
+        capacityKw,
+        basePriceOverrideText,
+        subsidyOverrideText,
+        extraWorkRows,
+        panelMakeText,
+        inverterMakeText,
+        paymentTermsText,
+        breakdown.grossQuotedPriceInr
+    ) {
+        val basePrice = basePriceOverrideText.trim().takeIf { it.isNotEmpty() }
+            ?.let { safeDouble(it, breakdown.grossQuotedPriceInr).coerceAtLeast(0.0) }
+            ?: breakdown.grossQuotedPriceInr
+        val defaultSub = RealCostingCalculator.defaultNationalPortalSubsidy(proposalModuleType, capacityKw)
+        val subsidy = if (!proposalModuleType.isDcrSubsidy) {
+            0.0
+        } else {
+            safeDouble(subsidyOverrideText, defaultSub).coerceAtLeast(0.0)
+        }
+        DetailedProposalOptions(
+            moduleType = proposalModuleType,
+            capacityKwp = capacityKw,
+            baseSystemPriceInr = basePrice,
+            subsidyAmountInr = subsidy,
+            extraWorkRows = extraWorkRows,
+            panelMake = panelMakeText.ifBlank { "ADANI / WAAREE / LUMINOUS" },
+            inverterMake = inverterMakeText.ifBlank { "WAAREE / K-SOLAR / SUNGROW" },
+            paymentTerms = paymentTermsText.ifBlank {
+                "70% Advance, 20% before Material Dispatch, 10% after Installation"
+            }
+        )
+    }
+    val detailedPricing = remember(breakdown, detailedOptions) {
+        RealCostingCalculator.computeDetailedProposalSummary(breakdown, detailedOptions)
     }
 
     val comparisonBreakdowns = remember(capacityKw, structureType, dimensions, effectiveRates) {
@@ -970,6 +1033,221 @@ fun SiteSurvey3DCostingScreen(
                             }
                         }
 
+                        // QUICK PROPOSAL CONTROLS FOR 2026 SITC PROPOSAL (EDITABLE PER PARTY)
+                        Surface(
+                            color = Color(0xFFF8FAFC),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, solarColors.gridBorderStrong),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("proposal_2026_controls_card")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "PROPOSAL CONTROLS (2026 SITC — EDITABLE PER PARTY)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaroonPrimary
+                                )
+
+                                // Module Type (DCR - With Subsidy vs Non-DCR - Without Subsidy)
+                                Text("MODULE TYPE", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    items(ProposalModuleType.entries) { mt ->
+                                        FilterChip(
+                                            selected = proposalModuleType == mt,
+                                            onClick = { proposalModuleType = mt },
+                                            label = { Text(mt.label) },
+                                            modifier = Modifier.testTag("proposal_module_${mt.name.lowercase()}")
+                                        )
+                                    }
+                                }
+
+                                // Base System Price (₹) + National Portal Subsidy (₹)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = basePriceOverrideText,
+                                        onValueChange = { basePriceOverrideText = it },
+                                        label = { Text("Base System Price (₹)") },
+                                        placeholder = { Text(breakdown.grossQuotedPriceInr.roundToInt().toString()) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("proposal_base_price_input")
+                                    )
+                                    OutlinedTextField(
+                                        value = if (proposalModuleType.isDcrSubsidy) subsidyOverrideText else "0",
+                                        onValueChange = { if (proposalModuleType.isDcrSubsidy) subsidyOverrideText = it },
+                                        enabled = proposalModuleType.isDcrSubsidy,
+                                        label = {
+                                            Text(
+                                                if (proposalModuleType.isDcrSubsidy) "Portal Subsidy (₹)"
+                                                else "Subsidy (N/A Non-DCR)"
+                                            )
+                                        },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("proposal_subsidy_input")
+                                    )
+                                }
+
+                                // Panel Make
+                                Text("PANEL MAKE", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    items(
+                                        listOf(
+                                            "ADANI / WAAREE / LUMINOUS",
+                                            "ADANI",
+                                            "WAAREE",
+                                            "LUMINOUS"
+                                        )
+                                    ) { make ->
+                                        FilterChip(
+                                            selected = panelMakeText.equals(make, ignoreCase = true),
+                                            onClick = { panelMakeText = make },
+                                            label = { Text(make, style = MaterialTheme.typography.labelSmall) }
+                                        )
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = panelMakeText,
+                                    onValueChange = { panelMakeText = it },
+                                    label = { Text("Panel Make (Editable)") },
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("proposal_panel_make_input")
+                                )
+
+                                // Inverter Make
+                                Text("INVERTER MAKE", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    items(
+                                        listOf(
+                                            "WAAREE / K-SOLAR / SUNGROW",
+                                            "WAAREE",
+                                            "K-SOLAR",
+                                            "SUNGROW"
+                                        )
+                                    ) { invMake ->
+                                        FilterChip(
+                                            selected = inverterMakeText.equals(invMake, ignoreCase = true),
+                                            onClick = { inverterMakeText = invMake },
+                                            label = { Text(invMake, style = MaterialTheme.typography.labelSmall) }
+                                        )
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = inverterMakeText,
+                                    onValueChange = { inverterMakeText = it },
+                                    label = { Text("Inverter Make (Editable)") },
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("proposal_inverter_make_input")
+                                )
+
+                                // Extra Work Rows
+                                Text("EXTRA WORK ROWS (OPTIONAL)", style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    val presets = listOf(
+                                        "Load/kVA Difference" to 8500.0,
+                                        "Elevated Structure" to 15000.0,
+                                        "Net Meter Deposit" to 4500.0,
+                                        "Custom Extra Work" to 5000.0
+                                    )
+                                    items(presets) { (presetTitle, presetAmt) ->
+                                        OutlinedButton(
+                                            onClick = {
+                                                extraWorkRows = extraWorkRows + ProposalExtraWorkRow(
+                                                    title = presetTitle,
+                                                    amountInr = presetAmt
+                                                )
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text(presetTitle, style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                                extraWorkRows.forEachIndexed { idx, row ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        OutlinedTextField(
+                                            value = row.title,
+                                            onValueChange = { newTitle ->
+                                                extraWorkRows = extraWorkRows.toMutableList().also {
+                                                    it[idx] = row.copy(title = newTitle)
+                                                }
+                                            },
+                                            label = { Text("Extra Work ${idx + 1}") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1.4f)
+                                        )
+                                        OutlinedTextField(
+                                            value = if (row.amountInr % 1.0 == 0.0) row.amountInr.toInt().toString() else row.amountInr.toString(),
+                                            onValueChange = { newAmt ->
+                                                extraWorkRows = extraWorkRows.toMutableList().also {
+                                                    it[idx] = row.copy(amountInr = safeDouble(newAmt, 0.0).coerceAtLeast(0.0))
+                                                }
+                                            },
+                                            label = { Text("₹") },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            singleLine = true,
+                                            modifier = Modifier.weight(0.8f)
+                                        )
+                                        IconButton(
+                                            onClick = {
+                                                extraWorkRows = extraWorkRows.filterNot { it.id == row.id }
+                                            },
+                                            modifier = Modifier.size(48.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Delete, contentDescription = "Remove Extra Work Row", tint = Color(0xFFB91C1C))
+                                        }
+                                    }
+                                }
+
+                                // Payment Terms
+                                OutlinedTextField(
+                                    value = paymentTermsText,
+                                    onValueChange = { paymentTermsText = it },
+                                    label = { Text("Payment Terms") },
+                                    minLines = 1,
+                                    maxLines = 2,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("proposal_payment_terms_input")
+                                )
+
+                                // Quick Computed Proposal Net Strip
+                                Surface(
+                                    color = LimeSoft,
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, LimeGreen),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = "Proposal Offer: Gross ${formatInr(detailedPricing.grossTotalWithExtrasInr)} • Subsidy ${if (proposalModuleType.isDcrSubsidy) "- ${formatInr(detailedPricing.subsidyAmountInr)}" else "N/A"} • Net ${formatInr(detailedPricing.netEffectiveCostInr)}",
+                                        style = MaterialTheme.typography.labelSmall.merge(TabularNumberStyle),
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF1F3B0B),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+
                         // CHOOSE PROPOSAL FORMAT / TEMPLATE (4 VARIETIES)
                         Text(
                             text = "CHOOSE PROPOSAL FORMAT / TEMPLATE",
@@ -993,23 +1271,23 @@ fun SiteSurvey3DCostingScreen(
                             color = Color(0xFF475569)
                         )
 
-                        // Live Proposal Preview + Direct Print / Share Actions
+                        // Live Proposal Preview + Direct WhatsApp PDF Share + Print A4
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             Button(
                                 onClick = { showProposalPreview = true },
                                 colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary, contentColor = Color.White),
                                 modifier = Modifier
-                                    .weight(1.3f)
+                                    .weight(1.2f)
                                     .height(48.dp)
                                     .testTag("preview_proposal_btn")
                             ) {
                                 Icon(Icons.Filled.Preview, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Live Preview & Export", fontWeight = FontWeight.Bold)
+                                Text("Live Preview", fontWeight = FontWeight.Bold)
                             }
-                            OutlinedButton(
+                            Button(
                                 onClick = {
-                                    ExportPrintHelper.printProposalWithCostingA4(
+                                    val res = ExportPrintHelper.shareProposalPdfOnWhatsApp(
                                         context = context,
                                         format = selectedProposalFormat,
                                         customerName = customerName.ifBlank { activeParty?.partyName ?: "Valued Solar Consumer" },
@@ -1017,42 +1295,76 @@ fun SiteSurvey3DCostingScreen(
                                         siteLocation = siteLocation.ifBlank { activeParty?.cityOrLocation ?: "Udaipur, Rajasthan" },
                                         consumerNo = consumerNo.ifBlank { activeParty?.consumerNumber.orEmpty() },
                                         breakdown = breakdown,
-                                        comparisonBreakdowns = comparisonBreakdowns,
                                         dimensions = dimensions,
-                                        rooftopBeforeBitmap = aiPhotoState.rooftopBefore,
                                         rooftopAfterBitmap = aiPhotoState.rooftopAfter,
-                                        inverterBeforeBitmap = aiPhotoState.inverterBefore,
                                         inverterAfterBitmap = aiPhotoState.inverterAfter,
-                                        includeOwnerInternalCosting = canSeeProfitability && includeOwnerCostingInPdf
+                                        comparisonBreakdowns = comparisonBreakdowns,
+                                        rooftopBeforeBitmap = aiPhotoState.rooftopBefore,
+                                        inverterBeforeBitmap = aiPhotoState.inverterBefore,
+                                        includeOwnerInternalCosting = canSeeProfitability && includeOwnerCostingInPdf,
+                                        detailedOptions = detailedOptions
                                     )
+                                    if (res.isFailure) {
+                                        onShowMessage("Share failed: ${res.exceptionOrNull()?.message ?: "unknown error"}")
+                                    }
                                 },
+                                colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
                                 modifier = Modifier
-                                    .weight(0.9f)
+                                    .weight(1.1f)
                                     .height(48.dp)
-                                    .testTag("generate_proposal_pdf_btn")
+                                    .testTag("share_proposal_pdf_btn")
                             ) {
-                                Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaroonPrimary)
+                                Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("Print PDF")
+                                Text("WhatsApp PDF", fontWeight = FontWeight.Bold)
                             }
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                ExportPrintHelper.printProposalWithCostingA4(
+                                    context = context,
+                                    format = selectedProposalFormat,
+                                    customerName = customerName.ifBlank { activeParty?.partyName ?: "Valued Solar Consumer" },
+                                    customerMobile = customerMobile.ifBlank { activeParty?.mobile.orEmpty() },
+                                    siteLocation = siteLocation.ifBlank { activeParty?.cityOrLocation ?: "Udaipur, Rajasthan" },
+                                    consumerNo = consumerNo.ifBlank { activeParty?.consumerNumber.orEmpty() },
+                                    breakdown = breakdown,
+                                    comparisonBreakdowns = comparisonBreakdowns,
+                                    dimensions = dimensions,
+                                    rooftopBeforeBitmap = aiPhotoState.rooftopBefore,
+                                    rooftopAfterBitmap = aiPhotoState.rooftopAfter,
+                                    inverterBeforeBitmap = aiPhotoState.inverterBefore,
+                                    inverterAfterBitmap = aiPhotoState.inverterAfter,
+                                    includeOwnerInternalCosting = canSeeProfitability && includeOwnerCostingInPdf,
+                                    detailedOptions = detailedOptions
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("generate_proposal_pdf_btn")
+                        ) {
+                            Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaroonPrimary)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Print / Save A4 PDF")
                         }
 
                         if (activeParty != null) {
                             OutlinedButton(
                                 onClick = {
-                                    val ratePerKw = (breakdown.grossQuotedPriceInr / breakdown.capacityKw).roundToInt().toDouble()
+                                    val ratePerKw = (detailedPricing.grossTotalWithExtrasInr / breakdown.capacityKw).roundToInt().toDouble()
                                     val surveySummary = buildString {
-                                        append("${breakdown.capacityKw} kW ${systemType.shortLabel} • ${structureType.shortLabel}")
+                                        append("${breakdown.capacityKw} kW ${detailedOptions.moduleType.shortLabel} • ${structureType.shortLabel}")
                                         append(" | Roof ${dimensions.roofLengthM}x${dimensions.roofWidthM}m")
                                         append(" | DC ${breakdown.wiring.dcCableMeters}m, AC ${breakdown.wiring.acCableMeters}m, Earth ${breakdown.wiring.earthingWireMeters}m")
-                                        append(" | Net After Subsidy ${formatInr(breakdown.finalNetCostAfterSubsidyInr)}")
+                                        append(" | Net After Subsidy ${formatInr(detailedPricing.netEffectiveCostInr)}")
                                     }
                                     onApplyQuoteToParty(
                                         activeParty.id,
                                         breakdown.capacityKw,
                                         structureType.toRoofType,
                                         ratePerKw,
-                                        breakdown.grossQuotedPriceInr,
+                                        detailedPricing.grossTotalWithExtrasInr,
                                         surveySummary
                                     )
                                 },
@@ -1092,6 +1404,7 @@ fun SiteSurvey3DCostingScreen(
             inverterBeforeBitmap = aiPhotoState.inverterBefore,
             inverterAfterBitmap = aiPhotoState.inverterAfter,
             includeOwnerInternalCosting = canSeeProfitability && includeOwnerCostingInPdf,
+            detailedOptions = detailedOptions,
             canApproveOrder = RolePermissions.canCreateParty(role),
             onDownloadPdf = {
                 ExportPrintHelper.printProposalWithCostingA4(
@@ -1108,7 +1421,8 @@ fun SiteSurvey3DCostingScreen(
                     rooftopAfterBitmap = aiPhotoState.rooftopAfter,
                     inverterBeforeBitmap = aiPhotoState.inverterBefore,
                     inverterAfterBitmap = aiPhotoState.inverterAfter,
-                    includeOwnerInternalCosting = canSeeProfitability && includeOwnerCostingInPdf
+                    includeOwnerInternalCosting = canSeeProfitability && includeOwnerCostingInPdf,
+                    detailedOptions = detailedOptions
                 )
             },
             onShareWhatsApp = {
@@ -1122,19 +1436,24 @@ fun SiteSurvey3DCostingScreen(
                     breakdown = breakdown,
                     dimensions = dimensions,
                     rooftopAfterBitmap = aiPhotoState.rooftopAfter,
-                    inverterAfterBitmap = aiPhotoState.inverterAfter
+                    inverterAfterBitmap = aiPhotoState.inverterAfter,
+                    comparisonBreakdowns = comparisonBreakdowns,
+                    rooftopBeforeBitmap = aiPhotoState.rooftopBefore,
+                    inverterBeforeBitmap = aiPhotoState.inverterBefore,
+                    includeOwnerInternalCosting = canSeeProfitability && includeOwnerCostingInPdf,
+                    detailedOptions = detailedOptions
                 )
                 if (res.isFailure) {
                     onShowMessage("Share failed: ${res.exceptionOrNull()?.message ?: "unknown error"}")
                 }
             },
-            onApproveOrder = {
-                val ratePerKw = (breakdown.grossQuotedPriceInr / breakdown.capacityKw).roundToInt().toDouble()
+            onApproveOrder = { approveTxnId ->
+                val ratePerKw = (detailedPricing.grossTotalWithExtrasInr / breakdown.capacityKw).roundToInt().toDouble()
                 val surveySummary = buildString {
-                    append("${breakdown.capacityKw} kW ${systemType.shortLabel} • ${structureType.shortLabel}")
+                    append("${breakdown.capacityKw} kW ${detailedOptions.moduleType.shortLabel} • ${structureType.shortLabel}")
                     append(" | ${selectedProposalFormat.shortTitle}")
                     append(" | DC ${breakdown.wiring.dcCableMeters}m, AC ${breakdown.wiring.acCableMeters}m")
-                    append(" | Net ${formatInr(breakdown.finalNetCostAfterSubsidyInr)}")
+                    append(" | Net ${formatInr(detailedPricing.netEffectiveCostInr)}")
                 }
                 onApproveAndConvertOrder(
                     activeParty?.id,
@@ -1145,9 +1464,10 @@ fun SiteSurvey3DCostingScreen(
                     breakdown.capacityKw,
                     structureType.toRoofType,
                     ratePerKw,
-                    breakdown.grossQuotedPriceInr,
-                    breakdown.pmSuryaGharSubsidyInr,
-                    surveySummary
+                    detailedPricing.grossTotalWithExtrasInr,
+                    detailedPricing.subsidyAmountInr,
+                    surveySummary,
+                    approveTxnId
                 )
                 showProposalPreview = false
             },
@@ -1172,18 +1492,21 @@ private fun LiveProposalPreviewDialog(
     inverterBeforeBitmap: Bitmap?,
     inverterAfterBitmap: Bitmap?,
     includeOwnerInternalCosting: Boolean,
+    detailedOptions: DetailedProposalOptions,
     canApproveOrder: Boolean,
     onDownloadPdf: () -> Unit,
     onShareWhatsApp: () -> Unit,
-    onApproveOrder: () -> Unit,
+    onApproveOrder: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val approveTxnUuid = remember { UUID.randomUUID().toString() }
+    var isApprovingOrder by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val previewHtml = remember(
         selectedFormat, customerName, customerMobile, siteLocation, consumerNo,
         breakdown, comparisonBreakdowns, dimensions,
         rooftopBeforeBitmap, rooftopAfterBitmap, inverterBeforeBitmap, inverterAfterBitmap,
-        includeOwnerInternalCosting
+        includeOwnerInternalCosting, detailedOptions
     ) {
         ExportPrintHelper.buildProposalHtml(
             context = context,
@@ -1199,7 +1522,8 @@ private fun LiveProposalPreviewDialog(
             rooftopAfterBitmap = rooftopAfterBitmap,
             inverterBeforeBitmap = inverterBeforeBitmap,
             inverterAfterBitmap = inverterAfterBitmap,
-            includeOwnerInternalCosting = includeOwnerInternalCosting
+            includeOwnerInternalCosting = includeOwnerInternalCosting,
+            detailedOptions = detailedOptions
         )
     }
 
@@ -1315,7 +1639,12 @@ private fun LiveProposalPreviewDialog(
                     }
                     if (canApproveOrder) {
                         Button(
-                            onClick = onApproveOrder,
+                            onClick = {
+                                if (isApprovingOrder) return@Button
+                                isApprovingOrder = true
+                                onApproveOrder(approveTxnUuid)
+                            },
+                            enabled = !isApprovingOrder,
                             colors = ButtonDefaults.buttonColors(containerColor = LimeGreen, contentColor = Color.White),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1323,7 +1652,10 @@ private fun LiveProposalPreviewDialog(
                         ) {
                             Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Approve & Convert to Active Order", fontWeight = FontWeight.Bold)
+                            Text(
+                                if (isApprovingOrder) "Converting..." else "Approve & Convert to Active Order",
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }

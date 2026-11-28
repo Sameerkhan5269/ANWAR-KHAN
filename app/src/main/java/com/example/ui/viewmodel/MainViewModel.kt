@@ -3,29 +3,34 @@ package com.example.ui.viewmodel
 import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.util.Base64
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.core.ExportPrintHelper
+import com.example.core.ImageCompressor
 import com.example.core.RolePermissions
 import com.example.core.nowTimestamp
 import com.example.core.todayIsoDate
+import com.example.data.BackupRestoreEngine
+import com.example.data.BulkLoanImporter
 import com.example.data.BusyAccountingEngine
+import com.example.data.DuplicateTransactionGuard
 import com.example.data.FirebaseAiPhotoRepository
 import com.example.data.FirebaseAiScannerRepository
+import com.example.data.LoanReminderEngine
 import com.example.data.RealCostingCalculator
+import com.example.data.StorageHealthStats
 import com.example.data.SupabaseSyncRepository
 import com.example.data.SyncStatus
 import com.example.data.WhatsAppParser
 import com.example.data.model.AppDatabaseSnapshot
 import com.example.data.model.AppHealthReport
 import com.example.data.model.BillRefType
+import com.example.data.model.BulkLoanPartyRow
 import com.example.data.model.BusyAccount
 import com.example.data.model.BusyAccountGroup
 import com.example.data.model.BusyItem
@@ -39,6 +44,7 @@ import com.example.data.model.DocumentCategory
 import com.example.data.model.HealthCheckItem
 import com.example.data.model.LeadSource
 import com.example.data.model.LeadStatus
+import com.example.data.model.LoanReminderItem
 import com.example.data.model.MaterialIssueLog
 import com.example.data.model.MeterType
 import com.example.data.model.PanelStatus
@@ -73,12 +79,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 
 private val Context.sessionDataStore by preferencesDataStore(name = "nb_solar_session")
 private val KEY_LOGGED_IN_ID = stringPreferencesKey("logged_in_login_id")
+private val KEY_LAST_BACKUP_ISO = stringPreferencesKey("last_backup_date_iso")
 
 enum class MainNavTab(val label: String) {
     PIPELINE("Pipeline"),
@@ -107,6 +113,13 @@ sealed interface AiScanUiState {
     data class Error(val message: String) : AiScanUiState
 }
 
+sealed interface BulkLoanScanUiState {
+    data object Idle : BulkLoanScanUiState
+    data class Parsing(val label: String) : BulkLoanScanUiState
+    data class Review(val rows: List<BulkLoanPartyRow>, val sourceLabel: String = "") : BulkLoanScanUiState
+    data class Error(val message: String) : BulkLoanScanUiState
+}
+
 data class MainUiState(
     val currentUser: StaffUser? = null,
     val loginError: String? = null,
@@ -123,7 +136,18 @@ data class MainUiState(
     val aiPhotoState: AiPhotoPlacementUiState = AiPhotoPlacementUiState(),
     val darkThemeOverride: Boolean? = null,
     val healthReport: AppHealthReport? = null,
-    val isRunningSelfTest: Boolean = false
+    val isRunningSelfTest: Boolean = false,
+    val showBulkLoanImporter: Boolean = false,
+    val bulkLoanScanState: BulkLoanScanUiState = BulkLoanScanUiState.Idle,
+    val showRemindersDrawer: Boolean = false,
+    val liveReminders: List<LoanReminderItem> = emptyList(),
+    val storageHealthStats: StorageHealthStats = StorageHealthStats(),
+    val lastBackupDateIso: String = "",
+    val backupOverdueBanner: String? = null,
+    val pendingRestorePreview: BackupRestoreEngine.BackupPreview? = null,
+    val isBackupBusy: Boolean = false,
+    val isFlushingQueue: Boolean = false,
+    val backupMasterUnlocked: Boolean = false
 ) {
     val visibleParties: List<PartyProject>
         get() {
@@ -158,6 +182,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _darkThemeOverride = MutableStateFlow<Boolean?>(null)
     private val _healthReport = MutableStateFlow<AppHealthReport?>(null)
     private val _isRunningSelfTest = MutableStateFlow(false)
+    private val _showBulkLoanImporter = MutableStateFlow(false)
+    private val _bulkLoanScanState = MutableStateFlow<BulkLoanScanUiState>(BulkLoanScanUiState.Idle)
+    private val _showRemindersDrawer = MutableStateFlow(false)
+    private val _lastBackupDateIso = MutableStateFlow("")
+    private val _pendingRestorePreview = MutableStateFlow<BackupRestoreEngine.BackupPreview?>(null)
+    private val _isBackupBusy = MutableStateFlow(false)
+    private val _isFlushingQueue = MutableStateFlow(false)
+    private val _backupMasterUnlocked = MutableStateFlow(false)
+    private val _healthRefreshTick = MutableStateFlow(0L)
+    private val txnGuard = DuplicateTransactionGuard()
+    @Volatile
+    private var hasAutoShownLaunchSummaryForUserId: String? = null
 
     private val navAndFilterFlow = combine(
         _currentUser,
@@ -190,18 +226,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val diagnosticsFlow = combine(
         _aiPhotoState,
         _healthReport,
-        _isRunningSelfTest
-    ) { photo, report, running ->
-        Triple(photo, report, running)
+        _isRunningSelfTest,
+        _showBulkLoanImporter,
+        _bulkLoanScanState,
+        _showRemindersDrawer
+    ) { arr ->
+        DiagnosticsBundle(
+            photoState = arr[0] as AiPhotoPlacementUiState,
+            healthReport = arr[1] as AppHealthReport?,
+            isRunningSelfTest = arr[2] as Boolean,
+            showBulkLoanImporter = arr[3] as Boolean,
+            bulkLoanScanState = arr[4] as BulkLoanScanUiState,
+            showRemindersDrawer = arr[5] as Boolean
+        )
+    }
+
+    private val backupSafetyFlow = combine(
+        _lastBackupDateIso,
+        _pendingRestorePreview,
+        _isBackupBusy,
+        _isFlushingQueue,
+        _backupMasterUnlocked
+    ) { lastDate, restorePrev, backupBusy, flushing, unlocked ->
+        BackupSafetyBundle(
+            lastBackupDateIso = lastDate,
+            pendingRestorePreview = restorePrev,
+            isBackupBusy = backupBusy,
+            isFlushingQueue = flushing,
+            backupMasterUnlocked = unlocked
+        )
+    }
+
+    private val coreSnapshotFlow = combine(
+        syncRepo.snapshot,
+        syncRepo.syncStatus,
+        backupSafetyFlow,
+        _healthRefreshTick
+    ) { snap, sync, safety, tick ->
+        CoreSnapshotTuple(snap, sync, safety, tick)
     }
 
     val uiState: StateFlow<MainUiState> = combine(
         navAndFilterFlow,
         searchAndToastFlow,
         diagnosticsFlow,
-        syncRepo.snapshot,
-        syncRepo.syncStatus
-    ) { nav, extra, diag, snap, sync ->
+        coreSnapshotFlow
+    ) { nav, extra, diag, core ->
+        val snap = core.snapshot
+        val sync = core.syncStatus
+        val safety = core.safety
+
         // Enforce strict privacy: if current role cannot access accounting, force back to PIPELINE
         val safeTab = if (nav.tab == MainNavTab.BUSY_ACCOUNTING &&
             (nav.user == null || !RolePermissions.canAccessAccounting(nav.user.role))
@@ -219,6 +293,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Enforce division isolation if user is assigned to Solar or Wind only
         val effectiveDivisionFilter = refreshedUser?.assignedDivision ?: extra.division
 
+        val visibleForReminders = refreshedUser?.assignedDivision?.let { assigned ->
+            snap.parties.filter { it.division == assigned }
+        } ?: snap.parties
+        val liveReminders = if (refreshedUser != null && RolePermissions.canViewLoanSection(refreshedUser.role)) {
+            LoanReminderEngine.computeReminders(visibleForReminders)
+        } else {
+            emptyList()
+        }
+
+        // Show combined "Today's Action & Payment Summary" popup ONCE on app launch/login (no popup fatigue)
+        if (refreshedUser != null &&
+            liveReminders.isNotEmpty() &&
+            hasAutoShownLaunchSummaryForUserId != refreshedUser.id
+        ) {
+            hasAutoShownLaunchSummaryForUserId = refreshedUser.id
+            viewModelScope.launch {
+                _showRemindersDrawer.value = true
+            }
+        }
+
+        val overdueStatus = BackupRestoreEngine.computeBackupOverdueStatus(safety.lastBackupDateIso)
+        val storageHealth = syncRepo.computeStorageHealth()
+
         MainUiState(
             currentUser = refreshedUser,
             loginError = nav.err,
@@ -232,10 +329,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             syncStatus = sync,
             toastMessage = extra.toast,
             aiScanState = extra.aiState,
-            aiPhotoState = diag.first,
+            aiPhotoState = diag.photoState,
             darkThemeOverride = extra.darkOverride,
-            healthReport = diag.second,
-            isRunningSelfTest = diag.third
+            healthReport = diag.healthReport,
+            isRunningSelfTest = diag.isRunningSelfTest,
+            showBulkLoanImporter = diag.showBulkLoanImporter,
+            bulkLoanScanState = diag.bulkLoanScanState,
+            showRemindersDrawer = diag.showRemindersDrawer,
+            liveReminders = liveReminders,
+            storageHealthStats = storageHealth,
+            lastBackupDateIso = safety.lastBackupDateIso,
+            backupOverdueBanner = overdueStatus.bannerMessage,
+            pendingRestorePreview = safety.pendingRestorePreview,
+            isBackupBusy = safety.isBackupBusy,
+            isFlushingQueue = safety.isFlushingQueue,
+            backupMasterUnlocked = safety.backupMasterUnlocked && refreshedUser?.role == StaffRole.OWNER
         )
     }.stateIn(
         scope = viewModelScope,
@@ -251,6 +359,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val prefs = getApplication<Application>().sessionDataStore.data.first()
+                _lastBackupDateIso.value = prefs[KEY_LAST_BACKUP_ISO].orEmpty()
                 val savedLogin = prefs[KEY_LOGGED_IN_ID]
                 if (!savedLogin.isNullOrBlank()) {
                     val user = syncRepo.snapshot.value.staffUsers.firstOrNull {
@@ -289,6 +398,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout() {
+        hasAutoShownLaunchSummaryForUserId = null
+        _showRemindersDrawer.value = false
+        _backupMasterUnlocked.value = false
+        _pendingRestorePreview.value = null
         _currentUser.value = null
         _selectedPartyId.value = null
         _selectedTab.value = MainNavTab.PIPELINE
@@ -381,7 +494,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             assignedDivision
         }
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_STAFF) { snap ->
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_SECURITY_CONFIG) { snap ->
             val filtered = snap.staffUsers.filterNot { it.loginId.equals(cleanId, ignoreCase = true) }
             snap.copy(
                 staffUsers = filtered + StaffUser(
@@ -400,7 +513,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteStaffUser(userId: String) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canManageUsers(actor.role)) return
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_STAFF) { snap ->
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_SECURITY_CONFIG) { snap ->
             snap.copy(staffUsers = snap.staffUsers.filterNot { it.id == userId && !it.isBuiltIn })
         }
         showToast("Staff user removed.")
@@ -417,7 +530,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         var targetName = ""
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_STAFF) { snap ->
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_SECURITY_CONFIG) { snap ->
             snap.copy(
                 staffUsers = snap.staffUsers.map { u ->
                     if (u.id != staffId) u else {
@@ -453,7 +566,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loan2Amount: Double,
         subsidyAmount: Double,
         partnerCommissionPct: Double,
-        division: ProjectDivision = ProjectDivision.SOLAR
+        division: ProjectDivision = ProjectDivision.SOLAR,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canCreateParty(actor.role)) {
@@ -464,6 +578,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Party name is required.")
             return
         }
+        val fp = "createParty|${name.trim().lowercase()}|${mobile.trim()}|$capacityKw"
+        if (!txnGuard.tryClaim(txnId, fp)) return
 
         val partyId = UUID.randomUUID().toString()
         val resolvedValue = if (projectValue > 0.0) {
@@ -512,9 +628,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
             snap.copy(parties = listOf(newParty) + snap.parties)
         }
+        if (loan1Amount > 0.0 || loan2Amount > 0.0 || subsidyAmount > 0.0) {
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_LOANS_MCO) { it }
+        }
 
         // Automatically create a matching Sundry Debtor ledger in BUSY 21 Accounts!
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ACCOUNTS) { snap ->
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
             val exists = snap.busyAccounts.any { it.name.equals(newParty.partyName, ignoreCase = true) }
             if (exists) snap else snap.copy(
                 busyAccounts = snap.busyAccounts + BusyAccount(
@@ -628,10 +747,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         quotedRatePerKw: Double,
         dealValue: Double,
         subsidyAmount: Double,
-        surveyNotes: String
+        surveyNotes: String,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         val cleanName = customerName.trim().ifBlank { "Valued Solar Consumer" }
+        val fp = "approveOrder|${existingPartyId.orEmpty()}|${cleanName.lowercase()}|$dealValue"
+        if (!txnGuard.tryClaim(txnId, fp)) return
         val division = actor.assignedDivision ?: ProjectDivision.SOLAR
 
         if (!existingPartyId.isNullOrBlank()) {
@@ -711,7 +833,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
                 snap.copy(parties = listOf(newParty) + snap.parties)
             }
-            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ACCOUNTS) { snap ->
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
                 val exists = snap.busyAccounts.any { it.name.equals(newParty.partyName, ignoreCase = true) }
                 if (exists) snap else snap.copy(
                     busyAccounts = snap.busyAccounts + BusyAccount(
@@ -772,7 +894,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val nowCompleted = !stage.completed
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
+        val isLoanOrMcoStage = stageId in setOf(
+            "LEAD_FILE_3",
+            "LOAN_2",
+            "LOAN_3",
+            "INSTALLATION_3",
+            "NET_METERING_2",
+            "NET_METERING_3",
+            "SUBSIDY_CLOSE_2"
+        )
+        val syncTargetKey = if (isLoanOrMcoStage) {
+            SupabaseSyncRepository.KEY_LOANS_MCO
+        } else {
+            SupabaseSyncRepository.KEY_PARTIES
+        }
+        syncRepo.updateAndSyncKey(syncTargetKey) { snap ->
             snap.copy(
                 parties = snap.parties.map { p ->
                     if (p.id != partyId) p else {
@@ -785,11 +921,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         val updatedLoan1 = if (stageId == "LOAN_2") nowCompleted else p.loan1Received
                         val updatedLoan2 = if (stageId == "LOAN_3") nowCompleted else p.loan2Received
+                        val updatedRseb = if (stageId == "LEAD_FILE_3") nowCompleted else p.rsebFileApplied
+                        val updatedMeter = if (stageId == "NET_METERING_2") nowCompleted else p.meterInstalled
+                        val updatedMco = if (stageId == "NET_METERING_3") nowCompleted else p.mcoOk
+                        val updatedSubsidy = if (stageId == "SUBSIDY_CLOSE_2") nowCompleted else p.subsidyReceived
+                        val updatedL1Date = if (stageId == "LOAN_2" && nowCompleted && p.loan1Date.isBlank()) todayIsoDate() else p.loan1Date
+                        val updatedL2Date = if (stageId == "LOAN_3" && nowCompleted && p.loan2Date.isBlank()) todayIsoDate() else p.loan2Date
+                        val updatedInstDate = if (stageId == "INSTALLATION_3") {
+                            if (nowCompleted) p.installationDoneDate.ifBlank { todayIsoDate() } else ""
+                        } else p.installationDoneDate
                         val logMsg = if (nowCompleted) "Completed: ${stage.title}" else "Reopened: ${stage.title}"
                         p.copy(
                             stages = updatedStages,
                             loan1Received = updatedLoan1,
                             loan2Received = updatedLoan2,
+                            loan1Date = updatedL1Date,
+                            loan2Date = updatedL2Date,
+                            installationDoneDate = updatedInstDate,
+                            rsebFileApplied = updatedRseb,
+                            meterInstalled = updatedMeter,
+                            mcoOk = updatedMco,
+                            subsidyReceived = updatedSubsidy,
                             siteLogs = listOf(
                                 SiteLogEntry(
                                     timestamp = nowTimestamp(),
@@ -802,6 +954,237 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             )
         }
+    }
+
+    fun setRemindersDrawerVisible(visible: Boolean) {
+        _showRemindersDrawer.value = visible
+    }
+
+    fun tickPartyMcoOk(partyId: String) {
+        val actor = _currentUser.value ?: return
+        if (!RolePermissions.canEditWorkflowSection(actor.role, com.example.data.model.WorkflowSection.NET_METERING)) {
+            showToast("Your role cannot update RSEB MCO status.")
+            return
+        }
+        var targetName = ""
+        // Sync strictly to `nb_loans_mco` so Office party/doc edits never get overwritten
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_LOANS_MCO) { snap ->
+            snap.copy(
+                parties = snap.parties.map { p ->
+                    if (p.id != partyId) p else {
+                        targetName = p.partyName
+                        val updatedStages = p.stages.map { s ->
+                            if (s.id == "NET_METERING_3" && !s.completed) {
+                                s.copy(completed = true, completedAt = nowTimestamp(), completedBy = actor.displayName)
+                            } else s
+                        }
+                        p.copy(
+                            mcoOk = true,
+                            stages = updatedStages,
+                            siteLogs = listOf(
+                                SiteLogEntry(
+                                    timestamp = nowTimestamp(),
+                                    author = actor.displayName,
+                                    message = "RSEB MCO OK ticked & synced"
+                                )
+                            ) + p.siteLogs
+                        )
+                    }
+                }
+            )
+        }
+        if (targetName.isNotBlank()) {
+            showToast("Marked MCO OK for $targetName & synced to Supabase.")
+        }
+    }
+
+    // --- BULK IMPORT LOAN PARTIES (EXCEL / CSV / PHOTO / PDF / WHATSAPP TEXT) ---
+
+    fun openBulkLoanImporter() {
+        val actor = _currentUser.value ?: return
+        if (!RolePermissions.canBulkImportLoanParties(actor.role, actor.assignedDivision)) {
+            showToast("Bulk Loan Import is restricted to Owner, Accounts, and Solar Office.")
+            return
+        }
+        _bulkLoanScanState.value = BulkLoanScanUiState.Idle
+        _showBulkLoanImporter.value = true
+    }
+
+    fun dismissBulkLoanImporter() {
+        _showBulkLoanImporter.value = false
+        _bulkLoanScanState.value = BulkLoanScanUiState.Idle
+    }
+
+    fun resetBulkLoanScanState() {
+        _bulkLoanScanState.value = BulkLoanScanUiState.Idle
+    }
+
+    fun importLoanPartiesFromFile(uri: Uri) {
+        val actor = _currentUser.value ?: return
+        if (!RolePermissions.canBulkImportLoanParties(actor.role, actor.assignedDivision)) return
+        viewModelScope.launch {
+            val resolver = getApplication<Application>().contentResolver
+            val fileName = withContext(Dispatchers.IO) { queryFileName(uri).orEmpty() }
+            val mime = withContext(Dispatchers.IO) { resolver.getType(uri).orEmpty().lowercase() }
+            val lowerName = fileName.lowercase()
+            val existingParties = syncRepo.snapshot.value.parties
+
+            when {
+                lowerName.endsWith(".csv") || mime.contains("csv") || mime == "text/plain" -> {
+                    _bulkLoanScanState.value = BulkLoanScanUiState.Parsing("Parsing CSV file ($fileName)…")
+                    val rows = withContext(Dispatchers.IO) {
+                        val txt = resolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
+                        BulkLoanImporter.parseCsvLoanParties(txt, existingParties)
+                    }
+                    _bulkLoanScanState.value = if (rows.isEmpty()) {
+                        BulkLoanScanUiState.Error("No valid customer loan rows found in $fileName. Check headers or download the sample CSV.")
+                    } else {
+                        BulkLoanScanUiState.Review(rows, sourceLabel = "CSV: $fileName")
+                    }
+                }
+                lowerName.endsWith(".xlsx") || mime.contains("spreadsheetml") -> {
+                    _bulkLoanScanState.value = BulkLoanScanUiState.Parsing("Reading Excel (.xlsx) workbook ($fileName)…")
+                    val rows = withContext(Dispatchers.IO) {
+                        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+                        runCatching { BulkLoanImporter.parseXlsxLoanParties(bytes, existingParties) }.getOrDefault(emptyList())
+                    }
+                    _bulkLoanScanState.value = if (rows.isEmpty()) {
+                        BulkLoanScanUiState.Error("Could not extract rows from $fileName. Try saving as CSV or uploading a PDF/screenshot.")
+                    } else {
+                        BulkLoanScanUiState.Review(rows, sourceLabel = "Excel: $fileName")
+                    }
+                }
+                lowerName.endsWith(".xls") || mime.contains("ms-excel") -> {
+                    _bulkLoanScanState.value = BulkLoanScanUiState.Parsing("Reading Excel (.xls) file ($fileName)…")
+                    val (directRows, rawTextFallback) = withContext(Dispatchers.IO) {
+                        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
+                        val parsed = runCatching { BulkLoanImporter.parseLegacyXlsOrText(bytes, existingParties) }.getOrDefault(emptyList())
+                        val text = if (parsed.isEmpty()) bytes.toString(Charsets.UTF_8).take(40_000) else ""
+                        parsed to text
+                    }
+                    if (directRows.isNotEmpty()) {
+                        _bulkLoanScanState.value = BulkLoanScanUiState.Review(directRows, sourceLabel = "Excel: $fileName")
+                    } else {
+                        val aiRes = aiScanner.scanLoanRegister(rawText = rawTextFallback, existingParties = existingParties)
+                        aiRes.fold(
+                            onSuccess = { rows ->
+                                _bulkLoanScanState.value = BulkLoanScanUiState.Review(rows, sourceLabel = "AI Excel: $fileName")
+                            },
+                            onFailure = {
+                                _bulkLoanScanState.value = BulkLoanScanUiState.Error(
+                                    "Legacy binary .xls could not be decoded. Please save as .xlsx / .csv or upload a PDF/Photo."
+                                )
+                            }
+                        )
+                    }
+                }
+                else -> {
+                    _bulkLoanScanState.value = BulkLoanScanUiState.Parsing("Scanning Loan Register with Gemini AI…")
+                    val (bitmap, pdfBytes, rawText) = withContext(Dispatchers.IO) { readUriForAi(uri) }
+                    if (bitmap == null && pdfBytes == null && rawText.isNullOrBlank()) {
+                        _bulkLoanScanState.value = BulkLoanScanUiState.Error("Unable to read selected file ($fileName). Use Photo, PDF, CSV, or XLSX.")
+                        return@launch
+                    }
+                    val res = aiScanner.scanLoanRegister(
+                        bitmap = bitmap,
+                        pdfBytes = pdfBytes,
+                        rawText = rawText,
+                        existingParties = existingParties
+                    )
+                    res.fold(
+                        onSuccess = { rows ->
+                            _bulkLoanScanState.value = BulkLoanScanUiState.Review(rows, sourceLabel = "AI Scan: $fileName")
+                        },
+                        onFailure = { err ->
+                            _bulkLoanScanState.value = BulkLoanScanUiState.Error(err.message ?: "AI scan failed.")
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    fun importLoanPartiesFromText(rawText: String, useAi: Boolean) {
+        val actor = _currentUser.value ?: return
+        if (!RolePermissions.canBulkImportLoanParties(actor.role, actor.assignedDivision)) return
+        if (rawText.isBlank()) {
+            showToast("Paste WhatsApp or ledger text rows first.")
+            return
+        }
+        val existingParties = syncRepo.snapshot.value.parties
+        if (!useAi) {
+            val rows = BulkLoanImporter.parseRawTextLoanParties(rawText, existingParties)
+            _bulkLoanScanState.value = if (rows.isEmpty()) {
+                BulkLoanScanUiState.Error("No loan rows matched. Try 'AI Smart Parse (Gemini)' for free-form WhatsApp notes.")
+            } else {
+                BulkLoanScanUiState.Review(rows, sourceLabel = "WhatsApp / Text List")
+            }
+            return
+        }
+        viewModelScope.launch {
+            _bulkLoanScanState.value = BulkLoanScanUiState.Parsing("Extracting loan rows from text with Gemini AI…")
+            val res = aiScanner.scanLoanRegister(rawText = rawText, existingParties = existingParties)
+            res.fold(
+                onSuccess = { rows ->
+                    _bulkLoanScanState.value = BulkLoanScanUiState.Review(rows, sourceLabel = "AI WhatsApp Parse")
+                },
+                onFailure = { err ->
+                    _bulkLoanScanState.value = BulkLoanScanUiState.Error(err.message ?: "AI text parse failed.")
+                }
+            )
+        }
+    }
+
+    fun updateBulkLoanRow(rowId: String, transform: (BulkLoanPartyRow) -> BulkLoanPartyRow) {
+        val current = _bulkLoanScanState.value as? BulkLoanScanUiState.Review ?: return
+        val updated = current.rows.map { r -> if (r.id == rowId) transform(r) else r }
+        _bulkLoanScanState.value = current.copy(rows = updated)
+    }
+
+    fun addBlankBulkLoanRow() {
+        val current = _bulkLoanScanState.value as? BulkLoanScanUiState.Review
+        val newRow = BulkLoanPartyRow(partyName = "New Loan Party", siteCity = "Udaipur", capacityKw = 3.0)
+        _bulkLoanScanState.value = BulkLoanScanUiState.Review(
+            rows = (current?.rows ?: emptyList()) + newRow,
+            sourceLabel = current?.sourceLabel?.ifBlank { "Manual Grid" } ?: "Manual Grid"
+        )
+    }
+
+    fun removeBulkLoanRow(rowId: String) {
+        val current = _bulkLoanScanState.value as? BulkLoanScanUiState.Review ?: return
+        _bulkLoanScanState.value = current.copy(rows = current.rows.filterNot { it.id == rowId })
+    }
+
+    fun commitBulkLoanParties(txnId: String = "") {
+        val actor = _currentUser.value ?: return
+        if (!RolePermissions.canBulkImportLoanParties(actor.role, actor.assignedDivision)) return
+        val review = _bulkLoanScanState.value as? BulkLoanScanUiState.Review ?: return
+        val selectedRows = review.rows.filter { it.selected && it.partyName.isNotBlank() }
+        if (selectedRows.isEmpty()) {
+            showToast("Select at least one party row with a valid name to import.")
+            return
+        }
+        val fp = "bulkImport|${selectedRows.size}|${selectedRows.firstOrNull()?.partyName.orEmpty()}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+
+        val (newParties, newAccounts) = BulkLoanImporter.toPartyProjects(selectedRows, actor.displayName)
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PARTIES) { snap ->
+            snap.copy(parties = newParties + snap.parties)
+        }
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_LOANS_MCO) { it }
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
+            val existingNames = snap.busyAccounts.map { it.name.trim().lowercase() }.toSet()
+            val toAdd = newAccounts.filter { it.name.trim().lowercase() !in existingNames }
+            if (toAdd.isEmpty()) snap else snap.copy(busyAccounts = snap.busyAccounts + toAdd)
+        }
+
+        val newReminders = LoanReminderEngine.computeReminders(syncRepo.snapshot.value.parties)
+        _showBulkLoanImporter.value = false
+        _bulkLoanScanState.value = BulkLoanScanUiState.Idle
+        if (newReminders.isNotEmpty()) {
+            _showRemindersDrawer.value = true
+        }
+        showToast("Imported & synced ${newParties.size} loan parties to Supabase (${newReminders.size} active reminders).")
     }
 
     fun addPartySiteNote(partyId: String, note: String) {
@@ -831,9 +1214,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return WhatsAppParser.parse(rawText, syncRepo.snapshot.value.parties)
     }
 
-    fun applyWhatsAppUpdate(parsed: ParsedWhatsAppUpdate, targetPartyId: String?) {
+    fun applyWhatsAppUpdate(parsed: ParsedWhatsAppUpdate, targetPartyId: String?, txnId: String = "") {
         val actor = _currentUser.value ?: return
         val resolvedId = targetPartyId ?: parsed.matchedPartyId
+        val fp = "waUpdate|${resolvedId.orEmpty()}|${parsed.matchedPartyName}|${parsed.summaryNote.hashCode()}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
 
         if (resolvedId == null) {
             // Create party if authorized, else warn
@@ -920,22 +1305,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val mime = resolver.getType(uri) ?: "application/octet-stream"
                     val origName = queryFileName(uri) ?: "doc_${System.currentTimeMillis()}"
                     val vaultDir = File(getApplication<Application>().filesDir, "vault").apply { mkdirs() }
-                    val destFile = File(vaultDir, "${System.currentTimeMillis()}_${origName.replace(" ", "_")}")
 
-                    resolver.openInputStream(uri)?.use { input ->
-                        destFile.outputStream().use { output -> input.copyTo(output) }
+                    val isImage = mime.startsWith("image/") ||
+                        origName.endsWith(".jpg", ignoreCase = true) ||
+                        origName.endsWith(".jpeg", ignoreCase = true) ||
+                        origName.endsWith(".png", ignoreCase = true) ||
+                        origName.endsWith(".webp", ignoreCase = true)
+
+                    val (finalMime, destFile, thumbBase64) = if (isImage) {
+                        val compressed = ImageCompressor.compressUriToJpegAndBitmap(
+                            getApplication(),
+                            uri,
+                            maxWidth = ImageCompressor.DEFAULT_MAX_WIDTH,
+                            maxBytes = ImageCompressor.DEFAULT_MAX_BYTES
+                        )
+                        val jpgFile = File(vaultDir, "${System.currentTimeMillis()}_${origName.substringBeforeLast('.').replace(" ", "_")}.jpg")
+                        if (compressed != null) {
+                            jpgFile.writeBytes(compressed.jpegBytes)
+                            Triple("image/jpeg", jpgFile, compressed.base64Thumbnail)
+                        } else {
+                            resolver.openInputStream(uri)?.use { input ->
+                                jpgFile.outputStream().use { output -> input.copyTo(output) }
+                            }
+                            Triple(mime, jpgFile, "")
+                        }
+                    } else {
+                        val rawFile = File(vaultDir, "${System.currentTimeMillis()}_${origName.replace(" ", "_")}")
+                        resolver.openInputStream(uri)?.use { input ->
+                            rawFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        Triple(mime, rawFile, "")
                     }
-
-                    // Generate compact Base64 thumbnail for images so other synced phones see preview immediately
-                    val thumbBase64 = if (mime.startsWith("image/")) {
-                        createCompressedThumbnailBase64(destFile)
-                    } else ""
 
                     PartyDocument(
                         title = title.trim().ifBlank { origName },
                         category = category,
                         fileName = origName,
-                        mimeType = mime,
+                        mimeType = finalMime,
                         localFilePath = destFile.absolutePath,
                         base64Thumbnail = thumbBase64,
                         uploadedAt = nowTimestamp(),
@@ -981,7 +1387,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         vendorName: String,
         amount: Double,
         paymentSource: SitePurchasePaymentSource,
-        billPhotoUri: Uri?
+        billPhotoUri: Uri?,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         val party = syncRepo.snapshot.value.parties.firstOrNull { it.id == partyId } ?: return
@@ -989,6 +1396,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Enter item description and valid ₹ amount.")
             return
         }
+        val fp = "sitePurchase|$partyId|${itemDescription.trim().lowercase()}|$amount|${paymentSource.name}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
 
         viewModelScope.launch {
             var savedPath = ""
@@ -996,13 +1405,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (billPhotoUri != null) {
                 val (p, b64) = withContext(Dispatchers.IO) {
                     try {
-                        val resolver = getApplication<Application>().contentResolver
                         val billsDir = File(getApplication<Application>().filesDir, "site_bills").apply { mkdirs() }
                         val dest = File(billsDir, "bill_${System.currentTimeMillis()}.jpg")
-                        resolver.openInputStream(billPhotoUri)?.use { input ->
-                            dest.outputStream().use { out -> input.copyTo(out) }
+                        val compressed = ImageCompressor.compressUriToJpegAndBitmap(
+                            getApplication(),
+                            billPhotoUri,
+                            maxWidth = ImageCompressor.DEFAULT_MAX_WIDTH,
+                            maxBytes = ImageCompressor.DEFAULT_MAX_BYTES
+                        )
+                        if (compressed != null) {
+                            dest.writeBytes(compressed.jpegBytes)
+                            dest.absolutePath to compressed.base64Thumbnail
+                        } else {
+                            getApplication<Application>().contentResolver.openInputStream(billPhotoUri)?.use { input ->
+                                dest.outputStream().use { out -> input.copyTo(out) }
+                            }
+                            dest.absolutePath to ""
                         }
-                        dest.absolutePath to createCompressedThumbnailBase64(dest)
                     } catch (_: Exception) {
                         "" to ""
                     }
@@ -1054,7 +1473,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             // 2. Automatically deduct from Supervisor Imprest Wallet if paid via Supervisor Imprest Cash
             if (paymentSource == SitePurchasePaymentSource.SUPERVISOR_IMPREST) {
-                syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_STAFF) { snap ->
+                syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_SECURITY_CONFIG) { snap ->
                     val actorIsSupervisor = actor.role == StaffRole.SUPERVISOR
                     val targetLogin = if (actorIsSupervisor) {
                         actor.loginId
@@ -1072,31 +1491,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // 3. Automatically post Purchase (F9) / Payment (F5) voucher in BUSY 21 tagged to Party Cost Center
-            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ACCOUNTS) { snap ->
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
                 val vendorExists = snap.busyAccounts.any { it.name.equals(cleanVendor, ignoreCase = true) }
-                if (vendorExists) snap else snap.copy(
-                    busyAccounts = snap.busyAccounts + BusyAccount(
-                        name = cleanVendor,
-                        group = BusyAccountGroup.SUNDRY_CREDITORS,
-                        openingBalance = 0.0,
-                        defaultCostCenter = party.leadSource
-                    )
+                val updatedAccounts = if (vendorExists) snap.busyAccounts else snap.busyAccounts + BusyAccount(
+                    name = cleanVendor,
+                    group = BusyAccountGroup.SUNDRY_CREDITORS,
+                    openingBalance = 0.0,
+                    defaultCostCenter = party.leadSource
                 )
-            }
-
-            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_VOUCHERS) { snap ->
-                val accounts = snap.busyAccounts
-                val vendorAcc = accounts.firstOrNull { it.name.equals(cleanVendor, ignoreCase = true) }
+                val vendorAcc = updatedAccounts.firstOrNull { it.name.equals(cleanVendor, ignoreCase = true) }
                     ?: BusyAccount(name = cleanVendor, group = BusyAccountGroup.SUNDRY_CREDITORS, defaultCostCenter = party.leadSource)
                 val contraAcc = when (paymentSource) {
                     SitePurchasePaymentSource.SUPERVISOR_IMPREST ->
-                        accounts.firstOrNull { it.id == "acc_imprest" }
+                        updatedAccounts.firstOrNull { it.id == "acc_imprest" }
                             ?: BusyAccount(id = "acc_imprest", name = "Supervisor Imprest Cash Wallet", group = BusyAccountGroup.CASH_IN_HAND)
                     SitePurchasePaymentSource.COMPANY_UPI ->
-                        accounts.firstOrNull { it.id == "acc_sbi" }
+                        updatedAccounts.firstOrNull { it.id == "acc_sbi" }
                             ?: BusyAccount(id = "acc_sbi", name = "SBI Current A/c - NB Engineering (UPI)", group = BusyAccountGroup.BANK_ACCOUNTS)
                     SitePurchasePaymentSource.VENDOR_CREDIT ->
-                        accounts.firstOrNull { it.id == "acc_site_mat" }
+                        updatedAccounts.firstOrNull { it.id == "acc_site_mat" }
                             ?: BusyAccount(id = "acc_site_mat", name = "On-Site Local Hardware Purchases", group = BusyAccountGroup.PURCHASE_ACCOUNTS)
                 }
                 val vch = BusyVoucher(
@@ -1115,7 +1528,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     narration = "Party: ${party.partyName} | Site Mat: ${purchase.itemDescription} (${purchase.quantity}) | ${paymentSource.label}",
                     createdBy = actor.displayName
                 )
-                snap.copy(busyVouchers = listOf(vch) + snap.busyVouchers)
+                snap.copy(
+                    busyAccounts = updatedAccounts,
+                    busyVouchers = listOf(vch) + snap.busyVouchers
+                )
             }
 
             showToast("Site material purchase saved & synced (${voucherType.shortcut} #$vchNo).")
@@ -1128,12 +1544,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return WhatsAppParser.parseBulkLekhaJokha(rawText, syncRepo.snapshot.value.parties)
     }
 
-    fun applyBulkLekhaJokha(lines: List<ParsedLekhaJokhaLine>) {
+    fun applyBulkLekhaJokha(lines: List<ParsedLekhaJokhaLine>, txnId: String = "") {
         val actor = _currentUser.value ?: return
         if (lines.isEmpty()) {
             showToast("No valid Lekha Jokha expense lines detected.")
             return
         }
+        val fp = "lekhaJokha|${lines.size}|${lines.sumOf { it.amount }}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
         val date = todayIsoDate()
         val entries = lines.map { line ->
             SiteKharchaEntry(
@@ -1147,12 +1565,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 loggedBy = actor.displayName
             )
         }
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_KHARCHA) { snap ->
-            snap.copy(siteKharcha = entries + snap.siteKharcha)
-        }
-
-        // Auto-post Payment (F5) vouchers for BUSY 21 Accounting
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_VOUCHERS) { snap ->
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
             val expAcc = snap.busyAccounts.firstOrNull { it.id == "acc_site_exp" }
                 ?: BusyAccount(id = "acc_site_exp", name = "Site Labour & Daily Kharcha Exp", group = BusyAccountGroup.DIRECT_EXPENSES)
             val cashAcc = snap.busyAccounts.firstOrNull { it.id == "acc_cash" }
@@ -1175,7 +1588,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     createdBy = actor.displayName
                 )
             }
-            snap.copy(busyVouchers = newVouchers + snap.busyVouchers)
+            snap.copy(
+                siteKharcha = entries + snap.siteKharcha,
+                busyVouchers = newVouchers + snap.busyVouchers
+            )
         }
 
         showToast("Synced ${entries.size} Lekha Jokha entries to Site Kharcha & BUSY 21.")
@@ -1232,7 +1648,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         brand: String,
         wattage: Int,
         supplierName: String,
-        invoiceNo: String
+        invoiceNo: String,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canAddStockOrPurchase(actor.role)) {
@@ -1247,7 +1664,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Enter at least one DCR panel serial number.")
             return
         }
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PANELS) { snap ->
+        val fp = "dcrBatch|${serials.size}|${serials.firstOrNull().orEmpty()}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_INVENTORY) { snap ->
             val existing = snap.dcrPanels.map { it.serialNumber.uppercase() }.toSet()
             val toAdd = serials.filter { it.uppercase() !in existing }.map { sn ->
                 DcrPanel(
@@ -1265,13 +1684,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showToast("Added ${serials.size} DCR panel serial(s) to stock.")
     }
 
-    fun allocatePanelToParty(panelId: String, party: PartyProject?) {
+    fun allocatePanelToParty(panelId: String, party: PartyProject?, txnId: String = "") {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canAllocateInventory(actor.role)) {
             showToast("Your role cannot allocate DCR panels.")
             return
         }
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_PANELS) { snap ->
+        val fp = "allocPanel|$panelId|${party?.id.orEmpty()}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_INVENTORY) { snap ->
             snap.copy(
                 dcrPanels = snap.dcrPanels.map { p ->
                     if (p.id != panelId) p else {
@@ -1291,7 +1712,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         serialNumber: String,
         meterType: MeterType,
         makeAndPhase: String,
-        testingStatus: DiscomTestingStatus
+        testingStatus: DiscomTestingStatus,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canAllocateInventory(actor.role)) return
@@ -1299,7 +1721,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Meter serial number is required.")
             return
         }
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_METERS) { snap ->
+        val fp = "addMeter|${serialNumber.trim().lowercase()}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_INVENTORY) { snap ->
             snap.copy(
                 solarMeters = listOf(
                     SolarMeter(
@@ -1317,11 +1741,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateMeterAllocation(
         meterId: String,
         testingStatus: DiscomTestingStatus,
-        party: PartyProject?
+        party: PartyProject?,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canAllocateInventory(actor.role)) return
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_METERS) { snap ->
+        val fp = "updMeter|$meterId|${testingStatus.name}|${party?.id.orEmpty()}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_INVENTORY) { snap ->
             snap.copy(
                 solarMeters = snap.solarMeters.map { m ->
                     if (m.id != meterId) m else m.copy(
@@ -1342,7 +1769,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         unit: String,
         supplierName: String,
         addedQty: Double,
-        minAlert: Double
+        minAlert: Double,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canAddStockOrPurchase(actor.role)) {
@@ -1353,7 +1781,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Quantity must be greater than 0.")
             return
         }
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_RAW_MATERIALS) { snap ->
+        val fp = "addRaw|${materialId.orEmpty()}|${name.trim().lowercase()}|$addedQty"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_INVENTORY) { snap ->
             if (materialId != null) {
                 snap.copy(
                     rawMaterials = snap.rawMaterials.map { rm ->
@@ -1381,7 +1811,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         showToast("Raw material stock updated.")
     }
 
-    fun issueRawMaterialToSite(materialId: String, party: PartyProject, qty: Double) {
+    fun issueRawMaterialToSite(materialId: String, party: PartyProject, qty: Double, txnId: String = "") {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canAllocateInventory(actor.role)) {
             showToast("Your role cannot issue materials.")
@@ -1396,8 +1826,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Insufficient balance! Remaining: ${currentRm.remainingQty} ${currentRm.unit}")
             return
         }
+        val fp = "issueRaw|$materialId|${party.id}|$qty"
+        if (!txnGuard.tryClaim(txnId, fp)) return
 
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_RAW_MATERIALS) { snap ->
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_INVENTORY) { snap ->
             snap.copy(
                 rawMaterials = snap.rawMaterials.map { rm ->
                     if (rm.id != materialId) rm else rm.copy(
@@ -1425,12 +1857,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         group: BusyAccountGroup,
         openingBalance: Double,
         gstin: String,
-        costCenter: LeadSource
+        costCenter: LeadSource,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canAccessAccounting(actor.role)) return
         if (name.isBlank()) return
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ACCOUNTS) { snap ->
+        val fp = "busyAcc|${name.trim().lowercase()}|${group.name}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
             snap.copy(
                 busyAccounts = snap.busyAccounts + BusyAccount(
                     name = name.trim(),
@@ -1451,12 +1886,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         gstRate: Double,
         saleRate: Double,
         purchaseRate: Double,
-        openingStock: Double
+        openingStock: Double,
+        txnId: String = ""
     ) {
         val actor = _currentUser.value ?: return
         if (!RolePermissions.canAccessAccounting(actor.role)) return
         if (name.isBlank()) return
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ITEMS) { snap ->
+        val fp = "busyItem|${name.trim().lowercase()}|$hsn"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
             snap.copy(
                 busyItems = snap.busyItems + BusyItem(
                     name = name.trim(),
@@ -1490,12 +1928,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         explicitCgst: Double? = null,
         explicitSgst: Double? = null,
         explicitIgst: Double? = null,
-        customVoucherNo: String? = null
+        customVoucherNo: String? = null,
+        txnId: String = ""
     ): Boolean {
         val actor = _currentUser.value ?: return false
         if (!RolePermissions.canAccessAccounting(actor.role)) {
             showToast("Accounting restricted to Owner & Accounts Manager.")
             return false
+        }
+        val fp = "busyVch|${type.name}|${partyAccount.id}|${contraAccount.id}|$date|$taxableAmount|${utrOrChequeNo.trim()}"
+        if (!txnGuard.tryClaim(txnId, fp)) {
+            return true // Already submitted on first tap; treat duplicate tap as handled so UI dismisses cleanly
         }
 
         // Duplicate UTR guard for Payment / Receipt
@@ -1505,6 +1948,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.utrOrChequeNo.equals(cleanUtr, ignoreCase = true)
             }
             if (dup) {
+                txnGuard.releaseOnValidationFailure(txnId, fp)
                 showToast("Blocked duplicate UTR/Cheque No: $cleanUtr already exists!")
                 return false
             }
@@ -1534,6 +1978,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val total = computedTaxable + cgst + sgst + igst
         if (total <= 0.0) {
+            txnGuard.releaseOnValidationFailure(txnId, fp)
             showToast("Voucher amount must be greater than ₹0.")
             return false
         }
@@ -1571,14 +2016,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             createdBy = actor.displayName
         )
 
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_VOUCHERS) { snap ->
-            snap.copy(busyVouchers = listOf(voucher) + snap.busyVouchers)
-        }
-
-        // Auto-stock deduction (Sales F8) or addition (Purchase F9) in BUSY Item Master
-        if (lineItems.isNotEmpty() && (type == BusyVoucherType.SALES || type == BusyVoucherType.PURCHASE)) {
-            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ITEMS) { snap ->
-                val updatedItems = snap.busyItems.map { item ->
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
+            val updatedItems = if (lineItems.isNotEmpty() && (type == BusyVoucherType.SALES || type == BusyVoucherType.PURCHASE)) {
+                snap.busyItems.map { item ->
                     val matchedQty = lineItems
                         .filter { it.itemId == item.id || it.itemName.equals(item.name, ignoreCase = true) }
                         .sumOf { it.quantity }
@@ -1587,8 +2027,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         item.copy(stockQty = (item.stockQty + delta).coerceAtLeast(0.0))
                     }
                 }
-                snap.copy(busyItems = updatedItems)
+            } else {
+                snap.busyItems
             }
+            snap.copy(
+                busyVouchers = listOf(voucher) + snap.busyVouchers,
+                busyItems = updatedItems
+            )
         }
 
         // Auto-update Party receivedAmount when posting a Receipt (F6) linked to a party!
@@ -1619,7 +2064,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Only Owner / CEO can delete vouchers.")
             return
         }
-        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_VOUCHERS) { snap ->
+        syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { snap ->
             snap.copy(busyVouchers = snap.busyVouchers.filterNot { it.id == voucherId })
         }
         showToast("Voucher deleted.")
@@ -1699,19 +2144,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun postReviewedBankVouchers() {
+    fun postReviewedBankVouchers(txnId: String = "") {
         val state = _aiScanState.value as? AiScanUiState.BankReview ?: return
-        val snap = syncRepo.snapshot.value
-        val bankAcc = snap.busyAccounts.firstOrNull { it.id == state.bankAccountId }
-            ?: snap.busyAccounts.firstOrNull { it.group == BusyAccountGroup.BANK_ACCOUNTS }
-            ?: snap.busyAccounts.firstOrNull()
-            ?: return
-
         val toPost = state.rows.filter { it.selected && !it.isDuplicateUtr }
         if (toPost.isEmpty()) {
             showToast("No non-duplicate rows selected to post.")
             return
         }
+        val fp = "postAiBank|${toPost.size}|${toPost.firstOrNull()?.id.orEmpty()}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
+        val snap = syncRepo.snapshot.value
+        val bankAcc = snap.busyAccounts.firstOrNull { it.id == state.bankAccountId }
+            ?: snap.busyAccounts.firstOrNull { it.group == BusyAccountGroup.BANK_ACCOUNTS }
+            ?: snap.busyAccounts.firstOrNull()
+            ?: run {
+                txnGuard.releaseOnValidationFailure(txnId, fp)
+                return
+            }
 
         var postedCount = 0
         toPost.forEach { row ->
@@ -1726,7 +2175,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 partyAcc = BusyAccount(name = row.partyName, group = grp, defaultCostCenter = row.costCenter)
                 val newAcc = partyAcc
-                syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ACCOUNTS) { s ->
+                syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { s ->
                     s.copy(busyAccounts = s.busyAccounts + newAcc)
                 }
             }
@@ -1771,7 +2220,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun postReviewedPurchaseBill(bill: ParsedPurchaseBill, costCenter: LeadSource) {
+    fun postReviewedPurchaseBill(bill: ParsedPurchaseBill, costCenter: LeadSource, txnId: String = "") {
+        val fp = "postAiBill|${bill.supplierName}|${bill.invoiceNo}|${bill.totalAmount}"
+        if (!txnGuard.tryClaim(txnId, fp)) return
         val snap = syncRepo.snapshot.value
         var supplierAcc = snap.busyAccounts.firstOrNull {
             it.name.equals(bill.supplierName, ignoreCase = true)
@@ -1784,7 +2235,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 defaultCostCenter = costCenter
             )
             val createdSupplier = supplierAcc
-            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_ACCOUNTS) { s ->
+            syncRepo.updateAndSyncKey(SupabaseSyncRepository.KEY_BUSY_VOUCHERS) { s ->
                 s.copy(busyAccounts = s.busyAccounts + createdSupplier)
             }
         }
@@ -2059,6 +2510,218 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // --- OWNER 1-CLICK BACKUP, EXCEL WORKBOOK, RESTORE & STORAGE HEALTH ---
+
+    fun unlockBackupWithMasterKey(enteredKey: String): Boolean {
+        val actor = _currentUser.value ?: return false
+        if (actor.role != StaffRole.OWNER) {
+            showToast("Company Backup & Restore is restricted to Owner / CEO.")
+            return false
+        }
+        return if (BackupRestoreEngine.verifyOwnerMasterKey(enteredKey)) {
+            _backupMasterUnlocked.value = true
+            showToast("Owner Master Security Key verified. Backup & Restore unlocked.")
+            true
+        } else {
+            showToast("Invalid Owner Master Security Key.")
+            false
+        }
+    }
+
+    fun lockBackupPanel() {
+        _backupMasterUnlocked.value = false
+    }
+
+    fun downloadFullCompanyBackupJson() {
+        val actor = _currentUser.value ?: return
+        if (actor.role != StaffRole.OWNER || !_backupMasterUnlocked.value) {
+            showToast("Unlock with Owner Master Security Key first.")
+            return
+        }
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            try {
+                val snap = syncRepo.snapshot.value
+                val today = todayIsoDate()
+                val json = withContext(Dispatchers.IO) {
+                    BackupRestoreEngine.buildFullBackupJson(
+                        snapshot = snap,
+                        exportedBy = actor.displayName,
+                        exportedAt = nowTimestamp(),
+                        exportedDate = today
+                    )
+                }
+                val res = ExportPrintHelper.exportAndShareFullBackupJson(getApplication(), json, today)
+                res.fold(
+                    onSuccess = { file ->
+                        _lastBackupDateIso.value = today
+                        getApplication<Application>().sessionDataStore.edit { prefs ->
+                            prefs[KEY_LAST_BACKUP_ISO] = today
+                        }
+                        _healthRefreshTick.value = System.currentTimeMillis()
+                        showToast("Full Company Backup saved & ready: ${file.name}")
+                    },
+                    onFailure = { err ->
+                        showToast("Backup export failed: ${err.message ?: "error"}")
+                    }
+                )
+            } finally {
+                _isBackupBusy.value = false
+            }
+        }
+    }
+
+    fun exportMasterExcelWorkbook() {
+        val actor = _currentUser.value ?: return
+        if (actor.role != StaffRole.OWNER || !_backupMasterUnlocked.value) {
+            showToast("Unlock with Owner Master Security Key first.")
+            return
+        }
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            try {
+                val snap = syncRepo.snapshot.value
+                val today = todayIsoDate()
+                val bytes = withContext(Dispatchers.IO) {
+                    BackupRestoreEngine.buildMasterExcelWorkbookXlsx(snap)
+                }
+                val res = ExportPrintHelper.exportAndShareMasterExcelXlsx(getApplication(), bytes, today)
+                res.fold(
+                    onSuccess = { file ->
+                        _healthRefreshTick.value = System.currentTimeMillis()
+                        showToast("Master Excel Workbook exported: ${file.name}")
+                    },
+                    onFailure = { err ->
+                        showToast("Excel export failed: ${err.message ?: "error"}")
+                    }
+                )
+            } finally {
+                _isBackupBusy.value = false
+            }
+        }
+    }
+
+    fun exportMasterSummaryCsv() {
+        val actor = _currentUser.value ?: return
+        if (actor.role != StaffRole.OWNER || !_backupMasterUnlocked.value) {
+            showToast("Unlock with Owner Master Security Key first.")
+            return
+        }
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            try {
+                val snap = syncRepo.snapshot.value
+                val today = todayIsoDate()
+                val csv = withContext(Dispatchers.IO) {
+                    BackupRestoreEngine.buildMasterSummaryCsv(snap)
+                }
+                val res = ExportPrintHelper.exportAndShareMasterSummaryCsv(getApplication(), csv, today)
+                res.fold(
+                    onSuccess = { file ->
+                        _healthRefreshTick.value = System.currentTimeMillis()
+                        showToast("Master CSV exported: ${file.name}")
+                    },
+                    onFailure = { err ->
+                        showToast("CSV export failed: ${err.message ?: "error"}")
+                    }
+                )
+            } finally {
+                _isBackupBusy.value = false
+            }
+        }
+    }
+
+    fun previewRestoreFromBackupUri(uri: Uri) {
+        val actor = _currentUser.value ?: return
+        if (actor.role != StaffRole.OWNER || !_backupMasterUnlocked.value) {
+            showToast("Unlock with Owner Master Security Key first.")
+            return
+        }
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            try {
+                val rawJson = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openInputStream(uri)
+                        ?.bufferedReader()
+                        ?.use { it.readText() }
+                        .orEmpty()
+                }
+                val previewRes = withContext(Dispatchers.IO) {
+                    BackupRestoreEngine.parseAndPreviewBackupJson(rawJson)
+                }
+                previewRes.fold(
+                    onSuccess = { preview ->
+                        _pendingRestorePreview.value = preview
+                    },
+                    onFailure = { err ->
+                        showToast(err.message ?: "Invalid backup JSON file.")
+                    }
+                )
+            } finally {
+                _isBackupBusy.value = false
+            }
+        }
+    }
+
+    fun dismissRestorePreview() {
+        _pendingRestorePreview.value = null
+    }
+
+    fun confirmRestoreFromBackup() {
+        val actor = _currentUser.value ?: return
+        if (actor.role != StaffRole.OWNER || !_backupMasterUnlocked.value) {
+            showToast("Owner Master Security Key required to restore backup.")
+            return
+        }
+        val preview = _pendingRestorePreview.value ?: return
+        if (_isBackupBusy.value) return
+        viewModelScope.launch {
+            _isBackupBusy.value = true
+            try {
+                val res = syncRepo.restoreFullSnapshotToCloud(preview.snapshot)
+                _pendingRestorePreview.value = null
+                _healthRefreshTick.value = System.currentTimeMillis()
+                res.fold(
+                    onSuccess = { msg -> showToast(msg) },
+                    onFailure = { err -> showToast("Restore failed: ${err.message ?: "error"}") }
+                )
+            } finally {
+                _isBackupBusy.value = false
+            }
+        }
+    }
+
+    fun flushOfflineQueueNow() {
+        if (_isFlushingQueue.value) return
+        viewModelScope.launch {
+            _isFlushingQueue.value = true
+            try {
+                val res = syncRepo.flushOfflineQueueNow()
+                _healthRefreshTick.value = System.currentTimeMillis()
+                res.fold(
+                    onSuccess = { msg -> showToast(msg) },
+                    onFailure = { err -> showToast(err.message ?: "Flush queue failed.") }
+                )
+            } finally {
+                _isFlushingQueue.value = false
+            }
+        }
+    }
+
+    fun clearLocalCacheCloudSafe() {
+        viewModelScope.launch {
+            val freed = withContext(Dispatchers.IO) {
+                syncRepo.clearLocalCacheCloudSafe()
+            }
+            _healthRefreshTick.value = System.currentTimeMillis()
+            showToast("Cleared ${BackupRestoreEngine.formatByteSize(freed)} temporary cache safely. Cloud & Document Vault untouched.")
+        }
+    }
+
     // --- MEDIA HELPERS ---
 
     private fun readUriForAi(uri: Uri): Triple<Bitmap?, ByteArray?, String?> {
@@ -2068,10 +2731,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val fileName = queryFileName(uri).orEmpty().lowercase()
 
             when {
-                mime.startsWith("image/") || fileName.endsWith(".jpg") || fileName.endsWith(".png") || fileName.endsWith(".jpeg") -> {
-                    val rawBytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return Triple(null, null, null)
-                    val decoded = decodeScaledBitmap(rawBytes, 1400)
-                    Triple(decoded, null, null)
+                mime.startsWith("image/") ||
+                    fileName.endsWith(".jpg") ||
+                    fileName.endsWith(".jpeg") ||
+                    fileName.endsWith(".png") ||
+                    fileName.endsWith(".webp") ||
+                    fileName.endsWith(".heic") -> {
+                    val compressed = ImageCompressor.compressUriToJpegAndBitmap(
+                        context = getApplication(),
+                        uri = uri,
+                        maxWidth = ImageCompressor.DEFAULT_MAX_WIDTH,
+                        maxBytes = ImageCompressor.DEFAULT_MAX_BYTES
+                    )
+                    Triple(compressed?.bitmap, null, null)
                 }
                 mime == "application/pdf" || fileName.endsWith(".pdf") -> {
                     val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
@@ -2088,29 +2760,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (_: Exception) {
             Triple(null, null, null)
-        }
-    }
-
-    private fun decodeScaledBitmap(bytes: ByteArray, maxDim: Int): Bitmap? {
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-        var sample = 1
-        while (opts.outWidth / sample > maxDim || opts.outHeight / sample > maxDim) {
-            sample *= 2
-        }
-        val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOpts)
-    }
-
-    private fun createCompressedThumbnailBase64(file: File): String {
-        return try {
-            val bytes = file.readBytes()
-            val bmp = decodeScaledBitmap(bytes, 360) ?: return ""
-            val out = ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.JPEG, 60, out)
-            Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-        } catch (_: Exception) {
-            ""
         }
     }
 
@@ -2146,4 +2795,28 @@ private data class SearchToastTuple(
     val aiState: AiScanUiState,
     val darkOverride: Boolean?,
     val division: ProjectDivision?
+)
+
+private data class DiagnosticsBundle(
+    val photoState: AiPhotoPlacementUiState,
+    val healthReport: AppHealthReport?,
+    val isRunningSelfTest: Boolean,
+    val showBulkLoanImporter: Boolean,
+    val bulkLoanScanState: BulkLoanScanUiState,
+    val showRemindersDrawer: Boolean
+)
+
+private data class BackupSafetyBundle(
+    val lastBackupDateIso: String,
+    val pendingRestorePreview: BackupRestoreEngine.BackupPreview?,
+    val isBackupBusy: Boolean,
+    val isFlushingQueue: Boolean,
+    val backupMasterUnlocked: Boolean
+)
+
+private data class CoreSnapshotTuple(
+    val snapshot: AppDatabaseSnapshot,
+    val syncStatus: SyncStatus,
+    val safety: BackupSafetyBundle,
+    val healthRefreshTick: Long
 )

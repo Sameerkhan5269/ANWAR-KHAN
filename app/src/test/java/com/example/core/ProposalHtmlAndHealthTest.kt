@@ -3,8 +3,11 @@ package com.example.core
 import com.example.data.RealCostingCalculator
 import com.example.data.model.AppHealthReport
 import com.example.data.model.CostingStructureType
+import com.example.data.model.DetailedProposalOptions
 import com.example.data.model.HealthCheckItem
+import com.example.data.model.ProposalExtraWorkRow
 import com.example.data.model.ProposalFormat
+import com.example.data.model.ProposalModuleType
 import com.example.data.model.RealCostingRateConfig
 import com.example.data.model.SiteSurveyDimensions
 import com.example.data.model.SolarSystemType
@@ -92,6 +95,98 @@ class ProposalHtmlAndHealthTest {
         assertTrue(tenderHtml.contains("Stage 1 (30%)"))
         assertTrue(tenderHtml.contains("Stage 2 (60%)"))
         assertTrue(tenderHtml.contains("Stage 3 (10%)"))
+    }
+
+    @Test
+    fun format1SevenPageProposal2026_rendersAll7PagesAndEditableOptions() {
+        val dims = SiteSurveyDimensions()
+        val rates = RealCostingRateConfig()
+        val breakdown = RealCostingCalculator.computeRealCosting(
+            capacityKw = 5.0,
+            systemType = SolarSystemType.ON_GRID_DCR,
+            structureType = CostingStructureType.ELEVATED_GAZEBO,
+            dimensions = dims,
+            rates = rates
+        )
+
+        val dcrSubsidy = RealCostingCalculator.defaultNationalPortalSubsidy(
+            ProposalModuleType.DCR_WITH_SUBSIDY,
+            5.0
+        )
+        assertEquals(78_000.0, dcrSubsidy, 0.01)
+
+        val nonDcrSubsidy = RealCostingCalculator.defaultNationalPortalSubsidy(
+            ProposalModuleType.NON_DCR_WITHOUT_SUBSIDY,
+            5.0
+        )
+        assertEquals(0.0, nonDcrSubsidy, 0.01)
+
+        val options = DetailedProposalOptions(
+            moduleType = ProposalModuleType.DCR_WITH_SUBSIDY,
+            capacityKwp = 5.0,
+            baseSystemPriceInr = 265_000.0,
+            subsidyAmountInr = 78_000.0,
+            extraWorkRows = listOf(
+                ProposalExtraWorkRow(title = "Load/kVA Difference", amountInr = 8_500.0),
+                ProposalExtraWorkRow(title = "Elevated Structure", amountInr = 15_000.0)
+            ),
+            panelMake = "WAAREE",
+            inverterMake = "SUNGROW",
+            paymentTerms = "70% Advance, 20% before Material Dispatch, 10% after Installation"
+        )
+
+        val pricing = RealCostingCalculator.computeDetailedProposalSummary(breakdown, options)
+        assertEquals(265_000.0, pricing.baseSystemPriceInr, 0.01)
+        assertEquals(23_500.0, pricing.extraWorkTotalInr, 0.01)
+        assertEquals(288_500.0, pricing.grossTotalWithExtrasInr, 0.01)
+        assertEquals(78_000.0, pricing.subsidyAmountInr, 0.01)
+        assertEquals(210_500.0, pricing.netEffectiveCostInr, 0.01)
+
+        val html = ExportPrintHelper.buildProposalHtml(
+            context = null,
+            format = ProposalFormat.PM_SURYA_GHAR_2PG,
+            customerName = "Bhavesh Jain",
+            customerMobile = "9829055667",
+            siteLocation = "Hiran Magri, Udaipur",
+            consumerNo = "K-1102003344",
+            breakdown = breakdown,
+            dimensions = dims,
+            detailedOptions = options
+        )
+
+        assertTrue(html.contains("DETAILED SOLAR PROJECT PROPOSAL – 2026 (SITC)"))
+        for (page in 1..7) {
+            assertTrue("Missing PAGE $page OF 7 marker", html.contains("PAGE $page OF 7"))
+        }
+        assertTrue(html.contains("page-break-after: always"))
+        assertTrue(html.contains("page-after"))
+        assertTrue(html.contains("+91 99292 14883 / +91 90797 93510"))
+        assertTrue(html.contains("nbengineering87@gmail.com"))
+        assertTrue(html.contains("313001"))
+        assertTrue(html.contains("WAAREE"))
+        assertTrue(html.contains("SUNGROW"))
+        assertTrue(html.contains("Load/kVA Difference"))
+        assertTrue(html.contains("Elevated Structure"))
+        assertTrue(html.contains("70% Advance, 20% before Material Dispatch, 10% after Installation"))
+        assertTrue(html.contains("DCR - With Subsidy"))
+
+        // Verify Non-DCR hides subsidy cleanly
+        val nonDcrHtml = ExportPrintHelper.buildProposalHtml(
+            context = null,
+            format = ProposalFormat.PM_SURYA_GHAR_2PG,
+            customerName = "Bhavesh Jain",
+            customerMobile = "9829055667",
+            siteLocation = "Udaipur",
+            consumerNo = "K-1102003344",
+            breakdown = breakdown,
+            dimensions = dims,
+            detailedOptions = options.copy(
+                moduleType = ProposalModuleType.NON_DCR_WITHOUT_SUBSIDY,
+                subsidyAmountInr = 78_000.0 // should still compute 0 effective subsidy
+            )
+        )
+        assertTrue(nonDcrHtml.contains("Non-DCR - Without Subsidy"))
+        assertTrue(nonDcrHtml.contains("₹0 / N/A"))
     }
 
     @Test

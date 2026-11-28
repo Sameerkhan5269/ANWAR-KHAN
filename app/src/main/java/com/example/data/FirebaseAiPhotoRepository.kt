@@ -2,6 +2,7 @@ package com.example.data
 
 import android.graphics.Bitmap
 import android.util.Log
+import com.example.core.ImageCompressor
 import com.example.data.model.CostingStructureType
 import com.example.data.model.SolarSystemType
 import com.google.firebase.Firebase
@@ -85,10 +86,11 @@ class FirebaseAiPhotoRepository {
         opLabel: String
     ): Result<Bitmap> {
         return try {
+            val optimizedBitmap = ImageCompressor.compressBitmapForAi(inputBitmap)
             val response = withTimeout(60_000L) {
                 imageEditModel.generateContent(
                     content {
-                        image(inputBitmap)
+                        image(optimizedBitmap)
                         text(instruction)
                     }
                 )

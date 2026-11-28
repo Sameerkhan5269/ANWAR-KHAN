@@ -84,6 +84,7 @@ import com.example.ui.theme.LocalSolarColors
 import com.example.ui.theme.MaroonContainerLight
 import com.example.ui.theme.MaroonPrimary
 import java.io.File
+import java.util.UUID
 
 private val QUICK_HARDWARE_ITEMS = listOf(
     "GI Pipes / Angles",
@@ -109,7 +110,8 @@ fun PartySitePurchaseTab(
         vendorName: String,
         amount: Double,
         paymentSource: SitePurchasePaymentSource,
-        billPhotoUri: Uri?
+        billPhotoUri: Uri?,
+        txnId: String
     ) -> Unit
 ) {
     val solarColors = LocalSolarColors.current
@@ -251,8 +253,8 @@ fun PartySitePurchaseTab(
     if (showAddDialog) {
         AddSiteMaterialPurchaseDialog(
             onDismiss = { showAddDialog = false },
-            onSave = { desc, qty, vendor, amt, source, uri ->
-                onAddSitePurchase(desc, qty, vendor, amt, source, uri)
+            onSave = { desc, qty, vendor, amt, source, uri, txnId ->
+                onAddSitePurchase(desc, qty, vendor, amt, source, uri, txnId)
                 showAddDialog = false
             }
         )
@@ -430,10 +432,13 @@ private fun AddSiteMaterialPurchaseDialog(
         vendorName: String,
         amount: Double,
         paymentSource: SitePurchasePaymentSource,
-        billPhotoUri: Uri?
+        billPhotoUri: Uri?,
+        txnId: String
     ) -> Unit
 ) {
     val context = LocalContext.current
+    val txnUuid = remember { UUID.randomUUID().toString() }
+    var isSubmitting by remember { mutableStateOf(false) }
     var itemDesc by remember { mutableStateOf("") }
     var quantity by remember { mutableStateOf("1") }
     var vendorName by remember { mutableStateOf("") }
@@ -638,12 +643,15 @@ private fun AddSiteMaterialPurchaseDialog(
             val amt = safeDouble(amountText, 0.0)
             Button(
                 onClick = {
-                    onSave(itemDesc, quantity, vendorName, amt, paymentSource, selectedPhotoUri)
+                    if (isSubmitting) return@Button
+                    isSubmitting = true
+                    onSave(itemDesc, quantity, vendorName, amt, paymentSource, selectedPhotoUri, txnUuid)
                 },
-                enabled = itemDesc.isNotBlank() && amt > 0.0,
-                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary)
+                enabled = itemDesc.isNotBlank() && amt > 0.0 && !isSubmitting,
+                colors = ButtonDefaults.buttonColors(containerColor = MaroonPrimary),
+                modifier = Modifier.testTag("site_purchase_save_btn")
             ) {
-                Text("Save & Sync")
+                Text(if (isSubmitting) "Saving..." else "Save & Sync")
             }
         },
         dismissButton = {
